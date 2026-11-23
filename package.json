@@ -1,0 +1,8 @@
+{
+  "name": "roulette-table",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multiplayer elimination roulette: authoritative server + three.js client",
+  "scripts": { "start": "node server.js", "fast": "SPEED=10 node server.js" },
+  "engines": { "node": ">=18" }
+}
