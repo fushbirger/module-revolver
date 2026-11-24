@@ -30,6 +30,10 @@ function makeMaterial(texture, name) {
     metalness: metal ? 0.68 : 0.02,
     side: THREE.DoubleSide
   });
+  if (texture && (metal || fabric || wood)) {
+    material.bumpMap = texture;
+    material.bumpScale = metal ? 0.003 : fabric ? 0.012 : 0.008;
+  }
   if (/fortuna lettering|status lamp/i.test(name)) {
     material.emissive.setHex(0x49321c);
     material.emissiveIntensity = 0.65;
@@ -213,6 +217,17 @@ function findMesh(root, name) {
 
 export function createEnvironment(scene) {
   const environment = cloneModel('casino_environment');
+  const backgroundOffset = 4;
+  const roomShell = findObject(environment, 'Room Shell');
+  roomShell.position.z -= backgroundOffset;
+  findObject(roomShell, 'Stained concrete floor').position.z += backgroundOffset;
+  findObject(environment, 'Fortuna Sign').position.z -= backgroundOffset;
+  findObject(environment, 'Wall Roulette').position.z -= backgroundOffset;
+  const fixtures = findObject(environment, 'Casino Fixtures');
+  fixtures.position.z -= backgroundOffset;
+  fixtures.children
+    .filter(object => object.name.startsWith('Pendant '))
+    .forEach(object => { object.position.z += backgroundOffset; });
   scene.add(environment);
   return environment;
 }
@@ -271,26 +286,65 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   cloneMaterials(root);
   root.position.set(x, y, z);
   root.rotation.y = rotY;
-  root.scale.y *= [0.97, 1.03, 1, 0.96, 1.04, 1][Math.abs(Math.trunc(variant)) % 6];
+  const variantIndex = Math.abs(Math.trunc(variant)) % 12;
+  root.scale.y *= [0.97, 1.03, 1, 0.96, 1.04, 1.01, 0.98, 1.02, 0.95, 1.05, 0.99, 1.015][variantIndex];
+  root.scale.x *= [0.98, 1.02, 0.95, 1.04, 0.99, 1.03, 1.05, 0.97, 1.01, 0.96, 1.025, 0.985][variantIndex];
+  root.scale.z *= [1.01, 0.97, 1.04, 0.98, 1.02, 0.96, 0.95, 1.03, 0.99, 1.05, 0.975, 1.015][variantIndex];
 
   const body = findObject(root, 'Body');
+  body.scale.y = 1.15;
+  body.position.y += 0.1;
   const head = findObject(root, 'Head');
+  head.scale.setScalar(0.82);
+  const headTilts = [-0.035, 0.022, 0.045, -0.018, 0.032, -0.028, 0.012, -0.046, 0.038, -0.008, 0.05, -0.024];
+  const headTilt = headTilts[variantIndex];
+  head.rotation.z = headTilt;
+  const eyeMaterial = new THREE.MeshStandardMaterial({
+    color: 0x291311,
+    emissive: 0x5b2017,
+    emissiveIntensity: 0.16,
+    roughness: 0.36
+  });
+  const eyeGeometry = new THREE.SphereGeometry(0.018, 10, 8);
+  const eyes = [-1.35, 1.35].map(x => {
+    const eye = mk(eyeGeometry, eyeMaterial, x / 16, 0.055, 0.205, 0, 0, 0, false);
+    eye.scale.set(1, 0.7, 0.42);
+    eye.userData.openScaleY = 0.7;
+    head.add(eye);
+    return eye;
+  });
+  head.add(mk(
+    new THREE.ConeGeometry(0.022, 0.068, 5),
+    new THREE.MeshStandardMaterial({ color: 0x35231f, roughness: 0.95 }),
+    0, 0, 0.224, Math.PI / 2, 0, 0, false
+  ));
   const arm = findObject(root, 'LeftArm');
   const hand = findObject(root, 'Hand');
   const coat = findMesh(root, 'Low-poly trenchcoat silhouette');
   coat.material.emissive.setHex(0x390b10);
   coat.material.emissiveIntensity = 0;
-  const coatVariants = [0x424144, 0x474342, 0x3e4144, 0x45413c, 0x3f3d41, 0x49443f];
-  coat.material.color.setHex(coatVariants[Math.abs(Math.trunc(variant)) % coatVariants.length]);
+  const coatVariants = [
+    0x49393d, 0x374047, 0x4a4135, 0x373741, 0x493b43, 0x39423f,
+    0x53463c, 0x3e4549, 0x574044, 0x464239, 0x383440, 0x41483e
+  ];
+  coat.material.color.setHex(coatVariants[variantIndex]);
+  const tieColors = [
+    0x76232b, 0x7d6943, 0x29433a, 0x512637, 0x645746, 0x2d4149,
+    0x814b32, 0x4a5b66, 0x6e2930, 0x68643b, 0x68476e, 0x42624c
+  ];
+  findMesh(root, 'Oxblood tie').material.color.setHex(tieColors[variantIndex]);
+  findMesh(root, 'Oxblood fedora band').material.color.setHex(tieColors[variantIndex]);
 
   scene.add(root);
   return {
     root,
     body,
+    bodyHeightScale: 1.15,
     head,
+    headTilt,
     hand,
     arm,
-    eyes: [],
+    eyes,
     nextBlinkAt: performance.now() + 1200 + Math.random() * 4000,
     blinkUntil: 0,
     firstPersonParts: [

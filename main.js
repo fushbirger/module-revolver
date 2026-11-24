@@ -68,10 +68,11 @@ ws.onmessage = (e) => {
 /* ================================================================ scene */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x09090b);
-scene.fog = new THREE.FogExp2(0x111116, 0.024);
+scene.fog = new THREE.FogExp2(0x160d14, 0.026);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 const baseCamPos = BASE_CAM.clone();
+let cameraRoll = 0;
 camera.position.copy(baseCamPos);
 camera.lookAt(LOOK);
 
@@ -80,22 +81,22 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.22;
+renderer.toneMappingExposure = 1.12;
 document.body.appendChild(renderer.domElement);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 composer.addPass(new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.48,
-  0.55,
-  0.82
+  0.62,
+  0.7,
+  0.9
 ));
 const dreamPass = new ShaderPass({
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
-    uIntensity: { value: 0.4 },
+    uIntensity: { value: 0.62 },
     uPulse: { value: 0 },
     uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
   },
@@ -115,27 +116,33 @@ const dreamPass = new ShaderPass({
     varying vec2 vUv;
 
     float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7)) + uTime * 19.0) * 43758.5453);
+      return fract(sin(dot(p, vec2(127.1, 311.7)) + floor(uTime * 8.0)) * 43758.5453);
     }
 
     void main() {
       vec2 centered = vUv - 0.5;
       float radius = length(centered);
-      float breathing = sin(uTime * 0.34 + radius * 9.0) * 0.0025 * uIntensity;
-      float ripple = sin(vUv.y * 18.0 + vUv.x * 7.0 + uTime * 0.62);
+      float undertow = sin(vUv.y * 7.0 + uTime * 0.31
+        + sin(vUv.x * 4.0 - uTime * 0.19));
+      float breathing = sin(uTime * 0.27 + radius * 7.0) * 0.0045 * uIntensity;
       vec2 warpedUv = vUv + centered * breathing
-        + vec2(ripple, -ripple * 0.5) * (0.0008 * uIntensity + 0.0022 * uPulse);
+        + vec2(undertow, -undertow * 0.55) * (0.0025 * uIntensity + 0.009 * uPulse);
       vec2 direction = normalize(centered + vec2(0.0001));
-      float aberration = (0.0007 + 0.0013 * uIntensity + 0.005 * uPulse)
-        * smoothstep(0.0, 0.68, radius);
+      float aberration = (0.0015 + 0.003 * uIntensity + 0.012 * uPulse)
+        * smoothstep(0.08, 0.72, radius);
       vec3 color;
       color.r = texture2D(tDiffuse, warpedUv + direction * aberration).r;
       color.g = texture2D(tDiffuse, warpedUv).g;
       color.b = texture2D(tDiffuse, warpedUv - direction * aberration).b;
       float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luminance), color, 0.82);
-      float grain = hash(floor(vUv * uResolution * 0.5)) - 0.5;
-      color += grain * (0.012 + 0.012 * uIntensity);
+      color = mix(vec3(luminance), color, 0.9);
+      color *= vec3(1.04, 0.97, 0.94);
+      color += (1.0 - smoothstep(0.04, 0.46, luminance))
+        * vec3(0.024, 0.003, 0.012) * (0.5 + uIntensity * 0.35);
+      float vignette = 1.0 - smoothstep(0.28, 0.78, radius);
+      color *= 0.72 + vignette * 0.28;
+      float grain = hash(floor(vUv * uResolution * 0.55)) - 0.5;
+      color += grain * (0.022 + 0.018 * uIntensity);
       gl_FragColor = vec4(color, 1.0);
     }
   `
@@ -165,6 +172,7 @@ function updateResponsiveCamera() {
   camera.position.copy(baseCamPos);
   if (viewer) camera.lookAt(GUN_X, 0.92, GUN_Z);
   else camera.lookAt(LOOK);
+  cameraRoll = 0;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -735,13 +743,14 @@ function animate() {
   const now = performance.now();
   const ph = S.phase;
   const spinning = ph === 'SPINNING';
-  const phaseIntensity = ph === 'SPINNING' ? 0.95
-    : ph === 'AIMING' || ph === 'RESOLVING' ? 0.82
-      : ph === 'SETTLING' ? 0.72 : 0.4;
+  const phaseIntensity = ph === 'SPINNING' ? 1
+    : ph === 'AIMING' || ph === 'RESOLVING' ? 0.9
+      : ph === 'SETTLING' ? 0.82 : 0.62;
   dreamPass.uniforms.uTime.value = t;
   dreamPass.uniforms.uIntensity.value +=
     (phaseIntensity - dreamPass.uniforms.uIntensity.value) * Math.min(1, 2.8 * dt);
-  dreamPass.uniforms.uPulse.value = dreamPulse;
+  const ambientDream = 0.06 + (Math.sin(t * 0.55) + 1) * 0.025;
+  dreamPass.uniforms.uPulse.value = Math.max(dreamPulse, ambientDream);
   dreamPulse *= Math.pow(0.035, dt);
 
   // primer (thumb lever): pulled while spinning; hammer cocked until the shot
@@ -762,16 +771,18 @@ function animate() {
 
   players.forEach((p, i) => {
     if (!p.isDead) {
-      const idleHeadTurn = Math.sin(t * 0.38 + i * 2.1) * (i === S.active ? 0.02 : 0.045);
+      const idleHeadTurn = Math.sin(t * 0.31 + i * 2.1) * (i === S.active ? 0.055 : 0.09);
       p.head.rotation.y += (idleHeadTurn - p.head.rotation.y) * 1.4 * dt;
-      p.body.scale.y = 1 + Math.sin(t * 1.1 + i * 1.7) * 0.004;
+      const headTilt = p.headTilt + Math.sin(t * 0.23 + i * 1.4) * 0.012;
+      p.head.rotation.z += (headTilt - p.head.rotation.z) * 0.8 * dt;
+      p.body.scale.y = p.bodyHeightScale * (1 + Math.sin(t * 0.73 + i * 1.7) * 0.007);
     }
     if (now >= p.nextBlinkAt) {
       p.blinkUntil = now + 120;
       p.nextBlinkAt = now + 2600 + Math.random() * 3200;
     }
-    const blinkScale = now < p.blinkUntil ? 0.12 : 1;
     p.eyes.forEach(eye => {
+      const blinkScale = now < p.blinkUntil ? 0.08 : eye.userData.openScaleY;
       eye.scale.y += (blinkScale - eye.scale.y) * Math.min(1, 36 * dt);
     });
 
@@ -841,13 +852,15 @@ function animate() {
   }
 
   // lights, status lamp
+  spot.intensity = 178 * (0.96 + Math.sin(t * 0.27) * 0.025);
+  coldRim.intensity = 105 * (0.94 + Math.sin(t * 0.19 + 1.3) * 0.06);
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0x3b8c5a : 0x8f7a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
     lampHex = Math.sin(t * 50) > 0 ? 0xff1e27 : 0x111111;
     rim.intensity = 22 + finalFlash * 45;
     finalFlash *= Math.pow(0.08, dt);
-  } else rim.intensity = 48;
+  } else rim.intensity = 44 + Math.sin(t * 0.32) * 4;
   if (machine) machine.screenMat.color.setHex(lampHex);
 
   if (shake > 0.001) {
@@ -858,6 +871,13 @@ function animate() {
     );
     shake *= Math.pow(0.02, dt);
   } else camera.position.copy(baseCamPos);
+  if (S.you >= 0) {
+    camera.position.x += Math.sin(t * 0.21) * 0.009;
+    camera.position.y += Math.sin(t * 0.48) * 0.012;
+    const targetRoll = Math.sin(t * 0.24) * 0.0035 + Math.sin(t * 0.11) * 0.0015;
+    camera.rotateZ(targetRoll - cameraRoll);
+    cameraRoll = targetRoll;
+  }
 
   // Casino fixtures and room lighting stay fixed across turns and animations.
 
