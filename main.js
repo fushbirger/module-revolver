@@ -7,6 +7,8 @@ const RING_RX = 3.45, RING_RZ = 3.45, RING_CZ = 0.15; // seats follow the round 
 const BASE_CAM = new THREE.Vector3(0.0, 2.05, 6.8);
 const LOOK = new THREE.Vector3(0.0, 0.92, -0.45);
 let camSpread = 3.0;
+let machine = null;
+let players = [];
 
 /* ================================================================ server state
    The server owns the game. This client only renders `S` and sends actions:
@@ -57,8 +59,8 @@ ws.onmessage = (e) => {
 
 /* ================================================================ scene */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050506);
-scene.fog = new THREE.FogExp2(0x050506, 0.038);
+scene.background = new THREE.Color(0x09090b);
+scene.fog = new THREE.FogExp2(0x09090b, 0.032);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 const baseCamPos = BASE_CAM.clone();
@@ -68,39 +70,53 @@ camera.lookAt(LOOK);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.domElement.style.filter = 'grayscale(0.12) saturate(0.72) contrast(1.68) brightness(0.82)';
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.22;
 document.body.appendChild(renderer.domElement);
 
 function updateResponsiveCamera() {
   const aspect = window.innerWidth / window.innerHeight;
+  const viewer = S.you >= 0 ? players[S.you] : null;
   camera.aspect = aspect;
-  camera.fov = aspect < 1 ? Math.min(84, 58 / Math.sqrt(aspect)) : 58;
+  camera.fov = aspect < 1
+    ? Math.min(viewer ? 96 : 84, (viewer ? 72 : 58) / Math.sqrt(aspect))
+    : viewer ? 72 : 58;
   camera.updateProjectionMatrix();
-  // pull back so every seat fits (portrait phones, many players)
-  const dir = BASE_CAM.clone().sub(LOOK);
-  const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect;
-  const k = Math.max(1, (camSpread / tanH) / dir.length());
-  baseCamPos.copy(LOOK).addScaledVector(dir, k);
+  if (viewer) {
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(viewer.root.quaternion);
+    baseCamPos.copy(viewer.root.position).addScaledVector(forward, 0.12);
+    baseCamPos.y = viewer.root.position.y + 1.56;
+  } else {
+    // Keep the room overview while the player is in the party screens.
+    const dir = BASE_CAM.clone().sub(LOOK);
+    const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect;
+    const k = Math.max(1, (camSpread / tanH) / dir.length());
+    baseCamPos.copy(LOOK).addScaledVector(dir, k);
+  }
   camera.position.copy(baseCamPos);
-  camera.lookAt(LOOK);
+  if (viewer) camera.lookAt(GUN_X, 0.92, GUN_Z);
+  else camera.lookAt(LOOK);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
 
-const spot = new THREE.SpotLight(0xf1eadc, 68, 18, Math.PI / 4.7, 0.28, 1.25);
+const spot = new THREE.SpotLight(0xffedc2, 115, 18, Math.PI / 4.2, 0.38, 1.15);
 spot.position.set(0.0, 5.8, 1.2);
 spot.target.position.set(0, 0.2, -0.3);
 spot.castShadow = true;
-const rim = new THREE.PointLight(0xa20d12, 16, 14);
-rim.position.set(0, 2.7, -3.6);
-scene.add(new THREE.AmbientLight(0x211d20, 0.38), spot, spot.target, rim);
+const rim = new THREE.PointLight(0xb11822, 28, 14, 1.7);
+rim.position.set(0, 2.7, -6.2);
+const backFill = new THREE.PointLight(0x8fa6b4, 18, 12, 1.9);
+backFill.position.set(-5.2, 3.2, -3.8);
+const warmFill = new THREE.PointLight(0xffdca3, 22, 9, 1.7);
+warmFill.position.set(4.8, 2.4, 1.4);
+scene.add(new THREE.HemisphereLight(0x9ca9af, 0x17090a, 0.55), spot, spot.target, rim, backFill, warmFill);
 
 createEnvironment(scene);
 const gun = createGun(scene);
-let machine = null;
-let players = [];
 
 // shared confetti resources
 const confettiGeo = new THREE.PlaneGeometry(0.09, 0.06);
@@ -143,6 +159,17 @@ function buildSeats(n) {
     players.push(pl);
   }
   machine = createMachine(scene, n);
+  const viewer = S.you >= 0 ? players[S.you] : null;
+  if (viewer) {
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(viewer.root.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(viewer.root.quaternion);
+    machine.root.position.copy(viewer.root.position)
+      .addScaledVector(forward, 1.9)
+      .addScaledVector(right, 0.65);
+    machine.root.position.y = 0.14;
+    machine.root.rotation.y = viewer.root.rotation.y + Math.PI;
+    machine.root.scale.setScalar(Math.min(0.6, 1.6 / Math.max(1.3, n * 0.4 + 0.2)));
+  }
   camSpread = RING_RX + 1.0;
   updateResponsiveCamera();
 }
@@ -162,8 +189,10 @@ document.body.insertAdjacentHTML('beforeend', `
   <div id="resetRow" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
     <button id="bReset" style="padding:11px 16px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px">NEW MATCH</button>
   </div>
-  <div id="lobby" style="display:flex;position:fixed;inset:0;align-items:center;justify-content:center;z-index:20;background:rgba(0,0,0,0.6)">
-    <div id="lobbyBox" style="min-width:260px;max-width:90%;background:#0b0a0c;border:2px solid #666;padding:16px;font-size:13px;color:#ccc;line-height:1.7"></div>
+  <button id="soundToggle" type="button" aria-label="Mute game sounds" aria-pressed="false"
+    style="position:fixed;top:12px;right:12px;z-index:21;padding:8px 11px;background:rgba(12,11,12,.92);border:1px solid #8a7b5d;color:#ddd4c2;font:12px Georgia,serif;letter-spacing:1px">SOUND: ON</button>
+  <div id="lobby" style="display:flex;position:fixed;inset:0;align-items:center;justify-content:center;z-index:20;background:rgba(2,2,3,.72)">
+    <div id="lobbyBox" style="min-width:260px;max-width:90%;background:#0b0a0c;border:2px solid #8a7b5d;padding:18px;font-size:13px;color:#ddd4c2;line-height:1.7"></div>
   </div>
 `);
 const rosterEl = document.getElementById('roster');
@@ -178,6 +207,112 @@ const resetRow = document.getElementById('resetRow');
 const bReset   = document.getElementById('bReset');
 const lobbyEl  = document.getElementById('lobby');
 const lobbyBox = document.getElementById('lobbyBox');
+const soundToggle = document.getElementById('soundToggle');
+
+let audioContext = null;
+let noiseBuffer = null;
+let soundsMuted = false;
+let spinSoundTimer = null;
+
+function unlockAudio() {
+  const AudioContextClass = window.AudioContext;
+  if (!AudioContextClass) return;
+  if (!audioContext) {
+    audioContext = new AudioContextClass();
+    noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate, audioContext.sampleRate);
+    const samples = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+  }
+  if (audioContext.state === 'suspended') {
+    audioContext.resume().catch(error => console.warn('Unable to start game audio:', error));
+  }
+}
+document.addEventListener('pointerdown', unlockAudio, { once: true });
+
+function playTone(frequency, duration, type = 'sine', volume = 0.12, endFrequency = frequency) {
+  if (soundsMuted || !audioContext || audioContext.state !== 'running') return;
+  const now = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, now);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), now + duration);
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration);
+}
+
+function playNoise(duration, volume, filterType, frequency) {
+  if (soundsMuted || !audioContext || !noiseBuffer || audioContext.state !== 'running') return;
+  const now = audioContext.currentTime;
+  const source = audioContext.createBufferSource();
+  const filter = audioContext.createBiquadFilter();
+  const gain = audioContext.createGain();
+  source.buffer = noiseBuffer;
+  filter.type = filterType;
+  filter.frequency.setValueAtTime(frequency, now);
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioContext.destination);
+  source.start(now);
+  source.stop(now + duration);
+}
+
+function playDryClick() {
+  playNoise(.045, .18, 'highpass', 1000);
+  playTone(780, .035, 'square', .045, 360);
+}
+function playGunshot() {
+  playNoise(.28, .42, 'lowpass', 1900);
+  playTone(92, .24, 'triangle', .34, 38);
+  playTone(510, .055, 'square', .08, 180);
+}
+function stopSpinSound() {
+  if (spinSoundTimer !== null) clearInterval(spinSoundTimer);
+  spinSoundTimer = null;
+}
+function startSpinSound() {
+  stopSpinSound();
+  spinSoundTimer = setInterval(() => {
+    playNoise(.035, .09, 'highpass', 1800 + Math.random() * 1200);
+    playTone(240 + Math.random() * 180, .025, 'square', .025, 120);
+  }, 115);
+}
+function playCockingSound() {
+  playNoise(.075, .12, 'bandpass', 1350);
+  playTone(250, .09, 'square', .055, 180);
+}
+function playSpinStop() {
+  stopSpinSound();
+  for (let i = 0; i < 4; i++) {
+    setTimeout(() => {
+      playNoise(.055, .15, 'bandpass', 900 + i * 350);
+      playTone(430 - i * 65, .075, 'triangle', .07, 170);
+    }, i * 85);
+  }
+}
+function playStartCue() {
+  playNoise(.12, .12, 'highpass', 2400);
+  playTone(190, .22, 'triangle', .15, 95);
+  setTimeout(() => playTone(420, .3, 'sine', .09, 620), 150);
+}
+
+soundToggle.onclick = () => {
+  soundsMuted = !soundsMuted;
+  soundToggle.textContent = soundsMuted ? 'SOUND: OFF' : 'SOUND: ON';
+  soundToggle.setAttribute('aria-label', soundsMuted ? 'Enable game sounds' : 'Mute game sounds');
+  soundToggle.setAttribute('aria-pressed', String(soundsMuted));
+  if (soundsMuted) stopSpinSound();
+  else {
+    unlockAudio();
+    if (S.phase === 'SPINNING') startSpinSound();
+  }
+};
 
 function setControls(startOn, stopOn) {
   bStart.disabled = !startOn; bStart.style.opacity = startOn ? '1' : '0.4';
@@ -327,7 +462,13 @@ lobbyBox.onchange = (e) => {
 function applyState(m) {
   const prev = S;
   S = m; stateAt = performance.now();
-  if (prev.phase !== S.phase) hoverRemote = null;
+  if (prev.phase !== S.phase) {
+    hoverRemote = null;
+    if (S.phase === 'SPINNING') startSpinSound();
+    else if (prev.phase === 'SPINNING' && S.phase === 'SETTLING') playSpinStop();
+    else stopSpinSound();
+    if (S.phase === 'AIMING') playCockingSound();
+  }
 
   if (S.phase === 'LOBBY' || S.phase === 'PARTIES') { if (players.length) clearSeats(); }
   else if (!players.length || players.length !== S.players.length || prev.phase === 'LOBBY') buildSeats(S.players.length);
@@ -336,7 +477,8 @@ function applyState(m) {
     const p = players[i]; if (!p) return;
     const wasDead = p.isDead;
     p.lives = sp.lives; p.isDead = sp.dead;
-    p.head.visible = !sp.dead;
+    p.head.visible = !sp.dead && i !== S.you;
+    p.firstPersonParts.forEach(part => { part.visible = i !== S.you; });
     if (sp.dead && !wasDead) p.deadAt = performance.now();
   });
 
@@ -383,17 +525,23 @@ function onEvent(m) {
   const nm = (i) => (S.players[i] ? S.players[i].name : '?');
   const pullTrigger = () => { tAng = 0.45; setTimeout(() => { tAng = 0; }, 140); };
   if (m.e === 'blank') {
+    playDryClick();
     pullTrigger(); lamp(0x3b6e6c, 1000);
     hold(m.target === m.by ? `*CLICK* — BLANK! ${nm(m.by)} GOES AGAIN` : `*CLICK* — BLANK! ${nm(m.target)} TAKES THE GUN`, 1600);
   } else if (m.e === 'shot') {
+    playGunshot();
     pullTrigger(); shake = 0.24; gunKick = 0.20; lamp(0x9e1b24, 1100);
     if (m.dead) { burst(m.target); hold(`${nm(m.target)} ELIMINATED!`, 1700); }
     else hold(`BANG! ${nm(m.target)} DROPS TO ${m.lives} ${m.lives === 1 ? 'LIFE' : 'LIVES'}`, 1500);
   } else if (m.e === 'timeout') {
+    playTone(115, .35, 'triangle', .18, 45);
     burst(m.who); hold(`${nm(m.who)} DID NOT RESPOND — REMOVED`, 2200);
   } else if (m.e === 'sudden') {
+    playTone(260, .55, 'sawtooth', .12, 70);
+    setTimeout(() => playTone(520, .32, 'sine', .09, 330), 180);
     finalFlash = 1; shake = 0.35; hold('FINAL TWO — ALL LIVES = 1', 2400);
   } else if (m.e === 'start') {
+    playStartCue();
     hold('MATCH STARTED — RANDOM SEATS, RANDOM FIRST HOLDER', 2000);
   }
 }
@@ -460,7 +608,8 @@ const ndc = new THREE.Vector2();
 function pickPlayerAt(ev) {
   ndc.set((ev.clientX / window.innerWidth) * 2 - 1, -(ev.clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObjects(players.map(p => p.root), true);
+  const targets = players.filter((_, i) => i !== S.you).map(p => p.root);
+  const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
     while (o && o.userData.idx === undefined) o = o.parent;

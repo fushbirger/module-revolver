@@ -78,6 +78,27 @@ export function createEnvironment(scene) {
   scene.add(mk(new THREE.BoxGeometry(.34,8.0,18.8), wall, -9.35,2.55,-.1, 0,0,0, false));
   scene.add(mk(new THREE.BoxGeometry(.34,8.0,18.8), wall, 9.35,2.55,-.1, 0,0,0, false));
 
+  // Visible noir practical lighting: warm wall sconces and cool spill from the back rooms.
+  for (const x of [-6.2, -3.1, 3.1, 6.2]) {
+    const sconce = new THREE.Group();
+    sconce.position.set(x, 4.35, -8.98);
+    sconce.add(
+      mk(new THREE.BoxGeometry(.58,.12,.12), brass,0,0,.08),
+      mk(new THREE.BoxGeometry(.38,.66,.16), std(0x24140d,{roughness:.7,metalness:.18}),0,-.38,.12),
+      mk(new THREE.BoxGeometry(.28,.42,.08), new THREE.MeshBasicMaterial({color:0xffd79a}),0,-.38,.23,false)
+    );
+    scene.add(sconce);
+    const sconceLight = new THREE.PointLight(0xffbc67, 38, 5.5, 1.8);
+    sconceLight.position.set(x,3.9,-8.55);
+    sconceLight.castShadow = x === -3.1 || x === 3.1;
+    scene.add(sconceLight);
+  }
+  const greenBack = new THREE.PointLight(0x91b79d, 22, 9, 1.8);
+  greenBack.position.set(-7.5,2.7,-7.4);
+  const redBack = new THREE.PointLight(0x8f1721, 26, 9, 1.8);
+  redBack.position.set(7.5,2.7,-7.4);
+  scene.add(greenBack, redBack);
+
   // Dark polished floor inlays: restrained brass lines and a central circular carpet.
   for (let i = -3; i <= 3; i++) {
     const line = mk(new THREE.BoxGeometry(.012,.006,18), std(0x38302a,{roughness:.5,metalness:.45}), i*2.25,-1.418,-1.0,0,0,0,false);
@@ -458,6 +479,9 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   const chairLeather = std(0x25080b,{roughness:.9});
   const chairIron = std(0x090a0c,{roughness:.48,metalness:.78});
   const brass = std(0x77766f,{roughness:.42,metalness:.72});
+  const skinShadow = std(0x8e7868,{roughness:.78,metalness:.02});
+  const hair = std(0x09090a,{roughness:.92});
+  const shirt = std(0xd0cabd,{roughness:.72,metalness:.03});
 
   // High-backed casino chair with a shaped upholstered back, seat and visible frame.
   const chair=new THREE.Group(); chair.position.set(0,-.45,-.18);
@@ -501,6 +525,25 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   const headShape=mk(new THREE.SphereGeometry(.245,16,12),silhouette,0,0,0);
   headShape.scale.set(.88,1.12,.94); head.add(headShape);
 
+  // 1930s gangster read: fedora, visible skin planes, black hair, brow and moustache.
+  const fedora = new THREE.Group();
+  fedora.position.set(0,.22,.01);
+  fedora.add(
+    mk(new THREE.CylinderGeometry(.255,.255,.095,20),hair,0,.04,0),
+    mk(new THREE.CylinderGeometry(.31,.31,.025,24),hair,0,-.015,.04),
+    mk(new THREE.TorusGeometry(.265,.018,6,24),brass,0,.018,.02,0,0,0,false)
+  );
+  head.add(fedora);
+  const faceSide = std(0x2d2b2a,{roughness:.82});
+  head.add(
+    mk(new THREE.SphereGeometry(.024,8,6),skinShadow,-.075,.02,.227),
+    mk(new THREE.SphereGeometry(.024,8,6),skinShadow,.075,.02,.227),
+    mk(new THREE.BoxGeometry(.13,.018,.018),hair,-.075,.105,.225,0,0,-.08),
+    mk(new THREE.BoxGeometry(.13,.018,.018),hair,.075,.105,.225,0,0,.08),
+    mk(new THREE.ConeGeometry(.035,.09,8),faceSide,0,-.025,.235,0,0,0,false),
+    mk(new THREE.BoxGeometry(.105,.018,.018),hair,0,-.10,.225,0,0,0)
+  );
+
   const coatDetails = new THREE.Group();
   const coat = std(0x19191c,{roughness:.94,metalness:.02,side:THREE.DoubleSide});
   const lapel = std(0x29272a,{roughness:.9,metalness:.02,side:THREE.DoubleSide});
@@ -518,7 +561,16 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   addCoatPanel([[.30,1.11],[.20,1.27],[.06,1.10],[.16,.87]],lapel,.39);
   coatDetails.add(
     mk(new THREE.BoxGeometry(.58,.045,.025),lapel,0,.53,.355,0,0,0,false),
-    mk(new THREE.BoxGeometry(.065,.065,.025),buttons,0,.53,.375,0,0,0,false)
+    mk(new THREE.BoxGeometry(.065,.065,.025),buttons,0,.53,.375,0,0,0,false),
+    mk(new THREE.BoxGeometry(.11,.28,.025),shirt,0,.78,.365,0,0,0,false),
+    mk(new THREE.BoxGeometry(.14,.06,.03),std(0x6e1017,{roughness:.9}),0,.70,.385,0,0,0,false)
+  );
+  // Long coat tails and lapel piping make the silhouette read as a trench coat.
+  coatDetails.add(
+    mk(new THREE.BoxGeometry(.20,.72,.025),coat,-.22,-.18,.34,0,0,-.06,false),
+    mk(new THREE.BoxGeometry(.20,.72,.025),coat,.22,-.18,.34,0,0,.06,false),
+    mk(new THREE.BoxGeometry(.025,.82,.018),lapel,-.30,.20,.39,0,0,-.02,false),
+    mk(new THREE.BoxGeometry(.025,.82,.018),lapel,.30,.20,.39,0,0,.02,false)
   );
   for (const x of [-.085,.085]) {
     for (const y of [.68,.82,.96]) {
@@ -547,6 +599,10 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   body.add(coatDetails);
   root.add(chair,body);
   scene.add(root);
-  return {root,body,head,hand,arm,lives:3,isDead:false,glow:silhouette};
+  return {
+    root,body,head,hand,arm,
+    firstPersonParts:[torso,shoulders,neck,coatDetails],
+    lives:3,isDead:false,glow:silhouette
+  };
 }
 
