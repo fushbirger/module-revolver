@@ -23,12 +23,16 @@ SPEED=10 node server.js          # faster server timing for testing
 TURN_SECONDS=20 node server.js  # shorter inactivity limit
 ```
 
+Spins automatically stop after 10 seconds, so a player cannot keep the wheel spinning indefinitely.
+
 The browser loads Three.js r160 from jsDelivr, so an internet connection is required.
 
 ## Updated scene models
 
-- `models.js` contains the fixed room, round pedestal table, chairs, seated figures and a per-player life monitor with animated needles and status lamps.
-- `main.js` positions the seats around the round table, uses a desaturated industrial palette with hard warm/cool lighting, and layers subtle bloom, film grain, chromatic fringing and lens breathing over the scene.
+- `assets/blockbench/` contains editable Blockbench projects for the casino environment and veneer table, seated trenchcoat silhouettes and chairs, twin-chamber revolver, and chess-clock life monitor. The projects embed a shared, desaturated material atlas.
+- `models.js` loads those `.bbmodel` assets into the game and preserves the existing aiming, slumping, revolver, and life-monitor animations.
+- `scripts/build_blockbench_assets.mjs` regenerates the Blockbench projects and texture atlas.
+- `main.js` positions the seats around the table and applies the high-contrast warm/cool lighting, bloom, film grain, chromatic fringing, and lens breathing.
 - `index.html` is the game entry point.
 
 The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed; dreamlike post-processing swells during spins, aiming and shots.
@@ -36,6 +40,12 @@ The table and casino environment are created once and are not attached to round 
 ## Validation
 
 The JavaScript files pass Node syntax checks, and the Three.js post-processing module URLs were checked. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
+
+## Blockbench 3D editor
+
+Open this repository in a Codespace or VS Code Dev Container to launch the Blockbench web app. The container setup clones the Blockbench source into `/workspaces/blockbench`, installs it with Node.js 22, and opens Blockbench on port `3001` so the game server can keep using port `3000`. To edit a game asset, open a `.bbmodel` file from `assets/blockbench/` in Blockbench.
+
+After the container starts, Blockbench opens on port `3001`. Run `npm start` in the repository to serve the game on port `3000`.
 
 
 ## Upload to GitHub

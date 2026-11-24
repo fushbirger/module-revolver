@@ -4,7 +4,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { mk, createEnvironment, createGun, createMachine, createMafiaPlayer } from './models.js';
+import { mk, preloadBlockbenchAssets, createEnvironment, createGun, createMachine, createMafiaPlayer } from './models.js';
+
+await preloadBlockbenchAssets();
 
 /* ================================================================ config */
 const GUN_X = 0, GUN_Z = 0.35;                       // gun pivot on the table

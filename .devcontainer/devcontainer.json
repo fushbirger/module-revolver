@@ -1,0 +1,13 @@
+{
+  "name": "Blockbench 3D Studio",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "if [ -d /workspaces/blockbench/.git ]; then cd /workspaces/blockbench && git pull --ff-only; else git clone --depth 1 https://github.com/JannisX11/blockbench.git /workspaces/blockbench; fi && cd /workspaces/blockbench && npm install",
+  "postAttachCommand": "cd /workspaces/blockbench && npm run serve -- --host=0.0.0.0 --port=3001",
+  "forwardPorts": [3000, 3001],
+  "portsAttributes": {
+    "3001": {
+      "label": "Blockbench",
+      "onAutoForward": "openBrowser"
+    }
+  }
+}

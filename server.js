@@ -17,6 +17,7 @@ const path = require('path');
 const PORT = Number(process.env.PORT) || 3000;
 const SPEED = Number(process.env.SPEED) || 1;
 const TURN_MS = (Number(process.env.TURN_SECONDS) || 90) * 1000;
+const MAX_SPIN_MS = 10_000;
 const MAX_LIVES = 3, MIN_PLAYERS = 3, MAX_PLAYERS = 12;
 const PUBLIC = __dirname;
 const MIME = {
@@ -101,7 +102,8 @@ function newRoom() {
     target: null, neighbors: null, hover: null,
     live: false,      // HIDDEN outcome: never sent to clients before it resolves
     spinStart: 0, finalTwo: false, winner: -1, deadline: null, host: null,
-    id: '', name: '', maxPlayers: MAX_PLAYERS, timers: new Set(), botTimer: null, turnTimer: null
+    id: '', name: '', maxPlayers: MAX_PLAYERS, timers: new Set(),
+    botTimer: null, turnTimer: null, spinTimer: null
   };
 }
 const rooms = new Map();
@@ -115,7 +117,8 @@ function later(room, fn, ms) {
 function clearTimers(room) {
   room.timers.forEach(clearTimeout); room.timers.clear();
   clearTimeout(room.botTimer); clearTimeout(room.turnTimer);
-  room.botTimer = room.turnTimer = null;
+  clearTimeout(room.spinTimer);
+  room.botTimer = room.turnTimer = room.spinTimer = null;
 }
 
 const aliveIdx = (room) => room.seats.map((s, i) => (s.dead ? -1 : i)).filter(i => i >= 0);
@@ -268,9 +271,15 @@ function timeoutPlayer(room) {
 
 function doSpin(room) {
   room.phase = 'SPINNING'; room.spinStart = Date.now();
+  room.spinTimer = setTimeout(() => {
+    room.spinTimer = null;
+    if (room.phase === 'SPINNING') doStop(room);
+  }, MAX_SPIN_MS / SPEED);
   change(room);
 }
 function doStop(room) {
+  clearTimeout(room.spinTimer);
+  room.spinTimer = null;
   // Hidden 50/50. Hold time nudges it by at most 8% through a sine, so there is no pattern to learn.
   const held = ((Date.now() - room.spinStart) * SPEED) / 1000;
   room.live = Math.random() < 0.5 + 0.08 * Math.sin(held * 6.1);
@@ -456,5 +465,6 @@ function onClose(c) {
 server.listen(PORT, () => {
   console.log(`Roulette table running: http://localhost:${PORT}`);
   console.log(`  speed x${SPEED}, inactivity limit ${TURN_MS / 1000}s`);
+  console.log(`  maximum spin ${MAX_SPIN_MS / 1000}s`);
   console.log('  quick test: open /?quick=3 (you + 3 bots, auto-start)');
 });
