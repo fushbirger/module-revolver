@@ -10,6 +10,50 @@
     button { cursor: pointer; }
     button:disabled { cursor: default; }
     input { font-family: inherit; }
+    @media (pointer: coarse) {
+      * { box-sizing: border-box; }
+      canvas { height: 100dvh; touch-action: manipulation; }
+      #lobby { overflow-y: auto; padding: 12px; }
+      #lobbyBox { box-sizing: border-box; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+      #partyEntries { min-width: 0 !important; }
+      input, select { font-size: 16px; }
+      #roster { top: max(8px, env(safe-area-inset-top)) !important; gap: 4px !important; }
+      #roster > div { padding: 3px 5px !important; font-size: 9px !important; }
+      #msg { font-size: 11px !important; line-height: 1.35; }
+      #ui {
+        left: 50% !important;
+        top: auto !important;
+        bottom: calc(84px + env(safe-area-inset-bottom)) !important;
+        transform: translateX(-50%) !important;
+        flex-direction: row !important;
+        gap: 10px !important;
+      }
+      #ui button, #pick button, #resetRow button, #lobbyBox button {
+        min-height: 44px;
+        touch-action: manipulation;
+      }
+      #pick {
+        left: 10px !important;
+        right: 10px;
+        bottom: max(10px, env(safe-area-inset-bottom)) !important;
+        width: auto;
+        transform: none !important;
+        align-items: center;
+        gap: 8px;
+      }
+      #targetChoices {
+        display: flex;
+        max-width: 100%;
+        gap: 8px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding: 2px;
+        scrollbar-width: thin;
+      }
+      #targetChoices button { flex: 0 0 auto; }
+      #resetRow { bottom: max(10px, env(safe-area-inset-bottom)) !important; }
+      #lobbyBox { width: min(100%, 440px); min-width: 0 !important; max-width: 100% !important; }
+    }
   </style>
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -19,3 +63,4 @@
   <script type="module" src="./main.js"></script>
 </body>
 </html>
+

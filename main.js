@@ -10,32 +10,55 @@ let camSpread = 3.0;
 
 /* ================================================================ server state
    The server owns the game. This client only renders `S` and sends actions:
-   join / addBot / removeBot / start / spin / stop / pick{i} / hover{i} / rematch   */
-let S = { phase: 'LOBBY', players: [], active: -1, target: null, neighbors: null,
-          host: -1, you: -1, finalTwo: false, winner: -1, timeLeft: null, maxLives: 3 };
+   createParty / joinParty / leaveParty / addBot / removeBot / start / spin / stop / pick{i} / hover{i} / rematch */
+let S = { phase: 'PARTIES', players: [], active: -1, target: null, neighbors: null,
+          host: -1, you: -1, maxPlayers: 12, finalTwo: false, winner: -1, timeLeft: null, maxLives: 3 };
 let stateAt = performance.now();
 let hoverLocal = null, hoverRemote = null;
+let parties = [], lobbyError = '';
 
 const params = new URLSearchParams(location.search);
-const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> join, add 3 bots, start
+const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> create a test party, add bots, start
 let quickDone = false;
 
 const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-const send = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
-ws.onopen = () => { if (quick) send({ t: 'join', name: params.get('name') || 'TESTER' }); };
-ws.onclose = () => hold('DISCONNECTED FROM SERVER', 1e9);
+const send = (o) => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(o));
+    return true;
+  }
+  lobbyError = 'SERVER CONNECTION NOT READY — PLEASE WAIT OR RELOAD';
+  const errorEl = document.getElementById('partyError');
+  if (errorEl) errorEl.textContent = lobbyError;
+  return false;
+};
+ws.onopen = () => {
+  if (quick) send({ t: 'createParty', name: params.get('name') || 'TESTER', partyName: 'QUICK TEST', maxPlayers: 12 });
+};
+ws.onclose = () => {
+  lobbyError = 'DISCONNECTED FROM SERVER';
+  const errorEl = document.getElementById('partyError');
+  if (errorEl) errorEl.textContent = lobbyError;
+  hold(lobbyError, 1e9);
+};
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.t === 'state') applyState(m);
+  else if (m.t === 'parties') { parties = m.parties; renderPartyList(); }
   else if (m.t === 'hover') hoverRemote = m.i;
   else if (m.t === 'ev') onEvent(m);
-  else if (m.t === 'err') hold(m.msg, 2500);
+  else if (m.t === 'err') {
+    lobbyError = m.msg;
+    const errorEl = document.getElementById('partyError');
+    if (errorEl) errorEl.textContent = lobbyError;
+    hold(m.msg, 2500);
+  }
 };
 
 /* ================================================================ scene */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x080709);
-scene.fog = new THREE.FogExp2(0x080709, 0.035);
+scene.background = new THREE.Color(0x050506);
+scene.fog = new THREE.FogExp2(0x050506, 0.038);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 const baseCamPos = BASE_CAM.clone();
@@ -45,7 +68,7 @@ camera.lookAt(LOOK);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.domElement.style.filter = 'saturate(0.55) contrast(1.3) brightness(0.95)';
+renderer.domElement.style.filter = 'grayscale(0.12) saturate(0.72) contrast(1.68) brightness(0.82)';
 document.body.appendChild(renderer.domElement);
 
 function updateResponsiveCamera() {
@@ -66,49 +89,61 @@ function updateResponsiveCamera() {
 updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
 
-const spot = new THREE.SpotLight(0xe8e2d2, 68, 18, Math.PI / 4.7, 0.34, 1.25);
+const spot = new THREE.SpotLight(0xf1eadc, 68, 18, Math.PI / 4.7, 0.28, 1.25);
 spot.position.set(0.0, 5.8, 1.2);
 spot.target.position.set(0, 0.2, -0.3);
 spot.castShadow = true;
-const rim = new THREE.PointLight(0x7a2a2e, 11, 14);
+const rim = new THREE.PointLight(0xa20d12, 16, 14);
 rim.position.set(0, 2.7, -3.6);
 scene.add(new THREE.AmbientLight(0x211d20, 0.38), spot, spot.target, rim);
 
-const bulbs = createEnvironment(scene);
+createEnvironment(scene);
 const gun = createGun(scene);
 let machine = null;
 let players = [];
 
 // shared confetti resources
 const confettiGeo = new THREE.PlaneGeometry(0.09, 0.06);
-const confettiMats = [0x9e1b24, 0x8f7a45, 0x3b8c5a, 0x3b6e6c, 0xc7c2b8]
+const confettiMats = [0xb20d18, 0xd9d4c8, 0x5b0b10, 0x24262a, 0xeee7d5]
   .map(c => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
 const confetti = [];
 
 function clearSeats() {
-  players.forEach(p => scene.remove(p.root));
+  const disposeObject = (root) => {
+    const geometries = new Set();
+    const materials = new Set();
+    root.traverse(object => {
+      if (object.geometry) geometries.add(object.geometry);
+      if (object.material) {
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          materials.add(material);
+        }
+      }
+    });
+    scene.remove(root);
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
+  };
+  players.forEach(p => disposeObject(p.root));
   players = [];
-  if (machine) { scene.remove(machine.root); machine = null; }
+  if (machine) { disposeObject(machine.root); machine = null; }
   camSpread = 3.0;
   updateResponsiveCamera();
 }
 function buildSeats(n) {
   clearSeats();
-  const step = Math.min(34, 170 / Math.max(1, n - 1)) * Math.PI / 180;
   for (let i = 0; i < n; i++) {
-    const ang = (i - (n - 1) / 2) * step;
+    const ang = (i / n) * Math.PI * 2;
     const x = RING_RX * Math.sin(ang);
     const z = RING_CZ - RING_RZ * Math.cos(ang);
     const rotY = Math.atan2(GUN_X - x, GUN_Z - z);       // seat faces the gun
-    const aim  = Math.atan2(x - GUN_X, z - GUN_Z);       // gun yaw that points at this seat
-    const pl = createMafiaPlayer(scene, 'p' + i, 'PLAYER ' + (i + 1), x, 0.14, z, rotY, aim);
+    const pl = createMafiaPlayer(scene, x, 0.14, z, rotY);
     pl.root.userData.idx = i;
-    pl.armYaw = 0.63;                                    // arm swings toward the gun
     pl.deadAt = 0;
     players.push(pl);
   }
   machine = createMachine(scene, n);
-  camSpread = RING_RX * Math.sin(step * (n - 1) / 2) + 1.0;
+  camSpread = RING_RX + 1.0;
   updateResponsiveCamera();
 }
 
@@ -122,6 +157,7 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
   <div id="pick" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
     <button id="bSelf" style="padding:10px 18px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px;font-weight:bold">YOURSELF</button>
+    <div id="targetChoices" aria-label="Choose a player"></div>
   </div>
   <div id="resetRow" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
     <button id="bReset" style="padding:11px 16px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px">NEW MATCH</button>
@@ -137,6 +173,7 @@ const bStart   = document.getElementById('bStart');
 const bStop    = document.getElementById('bStop');
 const pickEl   = document.getElementById('pick');
 const bSelf    = document.getElementById('bSelf');
+const targetChoices = document.getElementById('targetChoices');
 const resetRow = document.getElementById('resetRow');
 const bReset   = document.getElementById('bReset');
 const lobbyEl  = document.getElementById('lobby');
@@ -168,38 +205,122 @@ function renderRoster() {
 
 /* ---------------------------------------------------------------- lobby */
 let lobbySig = '';
+let partyScreen = 'parties';
+let playerNameDraft = 'PLAYER';
+let partyNameDraft = 'MY PARTY';
+let partyMaxDraft = 12;
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+
+function renderPartyList() {
+  const listEl = document.getElementById('partyEntries');
+  if (!listEl) return;
+  listEl.innerHTML = parties.length ? parties.map(p => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #333">
+      <div><b>${escapeHtml(p.name)}</b><div style="font-size:11px;color:#888">LEADER: ${escapeHtml(p.host)} · ${p.count}/${p.maxPlayers} PLAYERS</div></div>
+      <button data-party="${escapeHtml(p.id)}" style="padding:7px 10px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-weight:bold" ${p.count >= p.maxPlayers ? 'disabled' : ''}>JOIN</button>
+    </div>`).join('') : '<div style="padding:12px 0;color:#888">NO OPEN PARTIES — CREATE ONE TO GET STARTED</div>';
+}
+
 function renderLobby() {
-  const show = S.phase === 'LOBBY';
+  const show = S.phase === 'PARTIES' || S.phase === 'LOBBY';
   lobbyEl.style.display = show ? 'flex' : 'none';
   if (!show) { lobbySig = ''; return; }
-  const joined = S.you >= 0;
-  const sig = joined ? 'J' + JSON.stringify(S.players.map(p => p.name + p.bot)) + S.host + S.you : 'F';
+  const inParty = S.phase === 'LOBBY' && S.you >= 0;
+  const sig = inParty
+    ? 'J' + S.roomName + JSON.stringify(S.players.map(p => p.name + p.bot)) + S.host + S.you
+    : S.phase + partyScreen;
   if (sig === lobbySig) return;        // don't wipe the name box while typing
   lobbySig = sig;
   const btn = 'padding:8px 12px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:12px;font-weight:bold;margin-right:6px';
-  let h = '<div style="font-size:15px;letter-spacing:2px;margin-bottom:10px">ROULETTE TABLE</div>';
-  if (!joined) {
-    h += `<div style="margin-bottom:8px">ENTER A NAME</div>
-      <input id="nameIn" maxlength="12" value="PLAYER" style="padding:8px;background:#161518;border:2px solid #666;color:#ccc;width:140px;margin-right:6px">
-      <button data-act="join" style="${btn}">JOIN</button>`;
+  const exitBtn = 'position:fixed;right:20px;bottom:20px;padding:12px 18px;background:#063514;border:3px solid #38df69;color:#c7ffd4;font-family:inherit;font-size:13px;font-weight:bold;letter-spacing:2px;text-shadow:0 0 8px #55ff7a;box-shadow:0 0 14px rgba(48,220,95,.45);cursor:pointer';
+  let h = '<div style="font-size:15px;letter-spacing:2px;margin-bottom:10px">ROULETTE PARTIES</div>';
+  if (S.phase === 'PARTIES') {
+    if (partyScreen === 'make') {
+      h = '<div style="font-size:15px;letter-spacing:2px;margin-bottom:10px">MAKE A PARTY</div>';
+      h += `<div style="margin-bottom:12px">CREATE A PARTY FOR OTHERS TO JOIN</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label>YOUR NAME<input id="nameIn" maxlength="12" value="${escapeHtml(playerNameDraft)}" style="display:block;padding:8px;background:#161518;border:2px solid #666;color:#ccc;width:210px;margin-top:4px"></label>
+          <label>PARTY NAME<input id="partyNameIn" maxlength="20" value="${escapeHtml(partyNameDraft)}" style="display:block;padding:8px;background:#161518;border:2px solid #666;color:#ccc;width:210px;margin-top:4px"></label>
+          <label>PARTY SIZE (3-12)
+            <select id="partyMaxIn" style="display:block;padding:8px;background:#161518;border:2px solid #666;color:#ccc;width:226px;margin-top:4px">
+              ${Array.from({ length: 10 }, (_, i) => i + 3).map(n => `<option value="${n}"${n === partyMaxDraft ? ' selected' : ''}>${n} PLAYERS</option>`).join('')}
+            </select>
+          </label>
+          <button data-act="createParty" style="${btn};width:max-content">CREATE PARTY</button>
+        </div>
+        <div id="partyError" style="min-height:18px;color:#d36b70;font-size:11px">${escapeHtml(lobbyError)}</div>
+        <button data-act="exitMake" style="${exitBtn}">EXIT</button>`;
+    } else {
+      h += `<div style="margin-bottom:12px">CHOOSE AN OPEN PARTY OR MAKE YOUR OWN</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <input id="nameIn" maxlength="12" value="${escapeHtml(playerNameDraft)}" placeholder="PLAYER NAME" style="padding:8px;background:#161518;border:2px solid #666;color:#ccc;width:150px">
+          <button data-act="showMake" style="${btn}">MAKE PARTY</button>
+        </div>
+        <div id="partyError" style="min-height:18px;color:#d36b70;font-size:11px">${escapeHtml(lobbyError)}</div>
+        <div style="margin:12px 0 4px;border-top:1px solid #444;padding-top:8px">OPEN PARTIES</div>
+        <div id="partyEntries" style="max-height:42vh;overflow:auto;min-width:280px"></div>`;
+    }
   } else {
+    h = `<div style="font-size:15px;letter-spacing:2px;margin-bottom:4px">${escapeHtml(S.roomName || 'PARTY')}</div>
+      <div style="font-size:11px;color:#888;margin-bottom:10px">PARTY LEADER STARTS THE MATCH</div>`;
     h += S.players.map((p, i) =>
-      `<div>${i + 1}. ${p.name}${p.bot ? ' [BOT]' : ''}${i === S.host ? ' [HOST]' : ''}${i === S.you ? ' (YOU)' : ''}</div>`).join('');
+      `<div>${i + 1}. ${escapeHtml(p.name)}${p.bot ? ' [BOT]' : ''}${i === S.host ? ' [LEADER]' : ''}${i === S.you ? ' (YOU)' : ''}</div>`).join('');
     if (S.you === S.host) {
       h += `<div style="margin-top:12px">
-        <button data-act="addBot" style="${btn}">ADD BOT</button>
+        <button data-act="addBot" style="${btn}" ${S.players.length >= S.maxPlayers ? 'disabled' : ''}>ADD BOT</button>
         <button data-act="removeBot" style="${btn}">REMOVE BOT</button>
-        <button data-act="start" style="${btn}" ${S.players.length < 2 ? 'disabled' : ''}>START</button></div>`;
-    } else h += '<div style="margin-top:12px">WAITING FOR THE HOST...</div>';
-    h += '<div style="margin-top:8px;font-size:11px;color:#888">2 TO 8 PLAYERS</div>';
+        <button data-act="start" style="${btn}" ${S.players.length < 3 ? 'disabled' : ''}>START</button></div>`;
+    } else h += '<div style="margin-top:12px">WAITING FOR THE PARTY LEADER...</div>';
+    h += `<div style="margin-top:8px;font-size:11px;color:#888">MIN. 3 · MAX. ${S.maxPlayers} · ${S.players.length} IN PARTY</div>`;
+    h += `<div id="partyError" style="min-height:18px;color:#d36b70;font-size:11px">${escapeHtml(lobbyError)}</div>
+      <button data-act="leaveParty" style="${exitBtn}">EXIT</button>`;
   }
   lobbyBox.innerHTML = h;
+  if (S.phase === 'PARTIES' && partyScreen === 'parties') renderPartyList();
 }
 lobbyBox.onclick = (e) => {
-  const a = e.target.dataset && e.target.dataset.act;
-  if (!a) return;
-  if (a === 'join') send({ t: 'join', name: document.getElementById('nameIn').value });
-  else send({ t: a });
+  const action = e.target.dataset && e.target.dataset.act;
+  const partyId = e.target.dataset && e.target.dataset.party;
+  if (action === 'showMake' || action === 'exitMake') {
+    partyScreen = action === 'showMake' ? 'make' : 'parties';
+    lobbySig = '';
+    renderLobby();
+    return;
+  }
+  if (action === 'createParty') {
+    lobbyError = '';
+    const nameIn = document.getElementById('nameIn');
+    const partyNameIn = document.getElementById('partyNameIn');
+    const partyMaxIn = document.getElementById('partyMaxIn');
+    if (!nameIn || !partyNameIn || !partyMaxIn) return;
+    send({
+      t: 'createParty',
+      name: nameIn.value,
+      partyName: partyNameIn.value,
+      maxPlayers: Number(partyMaxIn.value)
+    });
+    return;
+  }
+  if (partyId) {
+    lobbyError = '';
+    send({ t: 'joinParty', id: partyId, name: document.getElementById('nameIn').value });
+    return;
+  }
+  if (action === 'leaveParty') {
+    lobbyError = '';
+    partyScreen = 'parties';
+    lobbySig = '';
+    send({ t: action });
+  } else if (action) send({ t: action });
+};
+lobbyBox.oninput = (e) => {
+  if (e.target.id === 'nameIn') playerNameDraft = e.target.value;
+  if (e.target.id === 'partyNameIn') partyNameDraft = e.target.value;
+};
+lobbyBox.onchange = (e) => {
+  if (e.target.id === 'partyMaxIn') partyMaxDraft = Number(e.target.value);
 };
 
 /* ================================================================ server -> client */
@@ -208,13 +329,13 @@ function applyState(m) {
   S = m; stateAt = performance.now();
   if (prev.phase !== S.phase) hoverRemote = null;
 
-  if (S.phase === 'LOBBY') { if (players.length) clearSeats(); }
+  if (S.phase === 'LOBBY' || S.phase === 'PARTIES') { if (players.length) clearSeats(); }
   else if (!players.length || players.length !== S.players.length || prev.phase === 'LOBBY') buildSeats(S.players.length);
 
   S.players.forEach((sp, i) => {
     const p = players[i]; if (!p) return;
     const wasDead = p.isDead;
-    p.name = sp.name; p.lives = sp.lives; p.isDead = sp.dead;
+    p.lives = sp.lives; p.isDead = sp.dead;
     p.head.visible = !sp.dead;
     if (sp.dead && !wasDead) p.deadAt = performance.now();
   });
@@ -226,10 +347,13 @@ function applyState(m) {
   }
 
   const me = S.you >= 0 && S.you === S.active;
-  const inGame = S.phase !== 'LOBBY';
+  const inGame = S.phase !== 'LOBBY' && S.phase !== 'PARTIES';
   setControls(S.phase === 'IDLE' && me, S.phase === 'SPINNING' && me);
   uiEl.style.display = inGame && S.phase !== 'GAME_OVER' ? 'flex' : 'none';
-  pickEl.style.display = me && S.phase === 'SELECTING' ? 'block' : 'none';
+  const canSelect = me && S.phase === 'SELECTING';
+  const canPassOnTouch = me && touchUi && S.phase === 'NEIGHBOR';
+  pickEl.style.display = canSelect ? (touchUi ? 'flex' : 'block') : (canPassOnTouch ? 'flex' : 'none');
+  renderPickChoices();
   resetRow.style.display = S.phase === 'GAME_OVER' && S.you === S.host ? 'block' : 'none';
   rosterEl.style.display = inGame ? 'flex' : 'none';
   renderRoster();
@@ -262,7 +386,7 @@ function onEvent(m) {
     pullTrigger(); lamp(0x3b6e6c, 1000);
     hold(m.target === m.by ? `*CLICK* — BLANK! ${nm(m.by)} GOES AGAIN` : `*CLICK* — BLANK! ${nm(m.target)} TAKES THE GUN`, 1600);
   } else if (m.e === 'shot') {
-    pullTrigger(); shake = 0.24; gun.root.position.z = 0.20; lamp(0x9e1b24, 1100);
+    pullTrigger(); shake = 0.24; gunKick = 0.20; lamp(0x9e1b24, 1100);
     if (m.dead) { burst(m.target); hold(`${nm(m.target)} ELIMINATED!`, 1700); }
     else hold(`BANG! ${nm(m.target)} DROPS TO ${m.lives} ${m.lives === 1 ? 'LIFE' : 'LIVES'}`, 1500);
   } else if (m.e === 'timeout') {
@@ -302,6 +426,30 @@ function statusText() {
 
 /* ================================================================ picking players in the 3D scene */
 const mySelecting = () => S.you >= 0 && S.you === S.active && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR');
+const touchUi = window.matchMedia('(pointer: coarse)').matches;
+function renderPickChoices() {
+  const choosing = mySelecting();
+  const showChoices = touchUi && choosing;
+  bSelf.style.display = S.phase === 'SELECTING' ? '' : 'none';
+  targetChoices.replaceChildren();
+  targetChoices.style.display = showChoices ? 'flex' : 'none';
+  if (!showChoices) return;
+
+  const indexes = S.phase === 'NEIGHBOR'
+    ? [S.neighbors.left, S.neighbors.right]
+    : S.players.map((_, i) => i).filter(i => i !== S.active && !S.players[i].dead);
+  for (const i of indexes) {
+    const player = S.players[i];
+    if (!player || player.dead) continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `${S.phase === 'NEIGHBOR' ? 'PASS' : 'SHOOT'} ${player.name}`;
+    button.setAttribute('aria-label', `${S.phase === 'NEIGHBOR' ? 'Pass the gun to' : 'Shoot'} ${player.name}`);
+    button.style.cssText = 'padding:10px 12px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:12px;font-weight:bold';
+    button.onclick = () => { if (mySelecting()) { send({ t: 'pick', i }); setHover(null); } };
+    targetChoices.append(button);
+  }
+}
 function allowed(i) {
   if (!S.players[i] || S.players[i].dead) return false;
   if (S.phase === 'NEIGHBOR') return !!S.neighbors && (i === S.neighbors.left || i === S.neighbors.right);
@@ -342,22 +490,13 @@ bSelf.onpointerleave = () => { if (mySelecting()) setHover(null); };
 bSelf.onclick = () => { if (mySelecting()) send({ t: 'pick', i: S.active }); };
 
 /* ================================================================ animation */
-let spd = 0, cylTarget = null, targetGunYaw = null;
+let spd = 0, cylTarget = null, gunKick = 0;
 function angleDiff(a, b) { return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }
 
-// where the gun should point (null = just coast / hold)
-function desiredYaw() {
-  const aim = (i) => (players[i] ? players[i].aimAngle : null);
-  switch (S.phase) {
-    case 'IDLE':      return aim(S.active);
-    case 'AIMING':
-    case 'RESOLVING': return S.target !== null ? aim(S.target) : null;
-    case 'GAME_OVER': return aim(S.winner);
-    default:          return null;
-  }
-}
-
 const clock = new THREE.Clock();
+const aimPoint = new THREE.Vector3();
+const handPosition = new THREE.Vector3();
+const uiAnchor = new THREE.Vector3();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -373,12 +512,29 @@ function animate() {
   gun.hammer.rotation.x += (hAng - gun.hammer.rotation.x) * 18 * dt;
   gun.trigger.rotation.x += (tAng - gun.trigger.rotation.x) * 20 * dt;
 
-  // players: arm pulls the primer, needle shows lives, glow shows hover / target
+  // The active player holds the revolver and tracks the selected or hovered target.
   const hi = mySelecting() ? hoverLocal : ((ph === 'SELECTING' || ph === 'NEIGHBOR') ? hoverRemote : null);
+  let aimIndex = null;
+  if (ph === 'AIMING' || ph === 'RESOLVING') aimIndex = S.target;
+  else if (ph === 'SELECTING' || ph === 'NEIGHBOR') aimIndex = hi;
+  else if (ph === 'GAME_OVER') aimIndex = S.winner;
+  aimPoint.set(0, 0.4, 0);
+  if (aimIndex !== null && players[aimIndex]) players[aimIndex].head.getWorldPosition(aimPoint);
+
   players.forEach((p, i) => {
-    const pulling = spinning && i === S.active;
-    p.arm.rotation.x += ((pulling ? 0.4 : 0) - p.arm.rotation.x) * 10 * dt;
-    p.arm.rotation.y += ((pulling ? p.armYaw : 0) - p.arm.rotation.y) * 10 * dt;
+    if (!p.isDead) {
+      const pulling = spinning && i === S.active;
+      const holding = i === S.active && ph !== 'LOBBY';
+      const armYaw = Math.atan2(aimPoint.x - p.root.position.x, aimPoint.z - p.root.position.z);
+      p.arm.rotation.x += (((pulling || holding) ? 0.4 : 0) - p.arm.rotation.x) * 10 * dt;
+      p.arm.rotation.y += ((holding ? angleDiff(armYaw, p.root.rotation.y) : 0) - p.arm.rotation.y) * 10 * dt;
+    } else if (p.deadAt) {
+      const fall = Math.min(1, (now - p.deadAt) / 700);
+      const easedFall = fall * fall * (3 - 2 * fall);
+      p.body.rotation.x = -0.95 * easedFall;
+      p.body.rotation.z = (i % 2 ? 0.12 : -0.12) * easedFall;
+      p.body.position.z = -0.08 * easedFall;
+    }
 
     let want = 0;
     if (!p.isDead) {
@@ -394,25 +550,14 @@ function animate() {
       const n = machine.needles[i];
       n.rotation.z += ((-0.9 + (1 - frac) * 1.8 + jitter) - n.rotation.z) * 6 * dt;   // full = right, dead = left
     }
-    if (p.isDead && p.deadAt && now - p.deadAt > 900) p.root.visible = false;        // removed from play
   });
 
-  // gun spin
-  if (ph === 'LOBBY') {
-    gun.root.rotation.y += 0.2 * dt;
-  } else if (spinning) {
+  // Only the cylinder spins; the revolver stays in its holder's hand.
+  if (spinning) {
     spd = Math.min(spd + 28 * dt, 18);
-    gun.root.rotation.y += spd * dt;
     gun.cyl.rotation.z += spd * 2.4 * dt;
   } else {
     spd *= Math.pow(0.04, dt);
-    if (spd < 0.05) {
-      spd = 0;
-      const ty = desiredYaw();
-      if (ty !== null) gun.root.rotation.y += angleDiff(ty, gun.root.rotation.y) * 8 * dt;
-    } else {
-      gun.root.rotation.y += spd * dt;
-    }
     if (cylTarget !== null) {
       gun.cyl.rotation.z += (cylTarget - gun.cyl.rotation.z) * Math.min(1, 4 * dt);
       if (Math.abs(cylTarget - gun.cyl.rotation.z) < 0.02) { gun.cyl.rotation.z = cylTarget; cylTarget = null; }
@@ -420,10 +565,21 @@ function animate() {
       gun.cyl.rotation.z += spd * 2.4 * dt;
     }
   }
-  gun.root.position.z += (GUN_Z - gun.root.position.z) * 10 * dt;
+  const holder = players[S.active];
+  if (holder) {
+    holder.hand.getWorldPosition(handPosition);
+    const yaw = Math.atan2(aimPoint.x - handPosition.x, aimPoint.z - handPosition.z);
+    gun.root.rotation.y += angleDiff(yaw, gun.root.rotation.y) * 8 * dt;
+    gun.root.position.copy(handPosition);
+    gun.root.position.y += 0.37;
+    gunKick *= Math.pow(0.02, dt);
+    gun.root.position.z += gunKick;
+  } else {
+    gun.root.position.set(GUN_X, 0.62, GUN_Z);
+    gunKick = 0;
+  }
 
   // lights, status lamp
-  spot.intensity = 68; // stable casino lighting; no gameplay-driven flicker
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0x3b8c5a : 0x8f7a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
@@ -454,9 +610,9 @@ function animate() {
 
   // message line + 2D buttons follow the gun
   setMsg(now < msgHold.until ? msgHold.text : statusText());
-  const ap = gun.root.getWorldPosition(new THREE.Vector3());
-  ap.x += 1.0;
-  const kp = ap.project(camera);
+  gun.root.getWorldPosition(uiAnchor);
+  uiAnchor.x += 1.0;
+  const kp = uiAnchor.project(camera);
   uiEl.style.left = `${Math.max(10, Math.min(window.innerWidth - 90, (kp.x * 0.5 + 0.5) * window.innerWidth))}px`;
   uiEl.style.top  = `${Math.max(85, Math.min(window.innerHeight - 85, (-kp.y * 0.5 + 0.5) * window.innerHeight))}px`;
 
