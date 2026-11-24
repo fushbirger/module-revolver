@@ -29,13 +29,13 @@ The browser loads Three.js r160 from jsDelivr, so an internet connection is requ
 
 ## Updated scene models
 
-- `assets/blockbench/` contains editable Blockbench projects for the casino environment and veneer table, seated trenchcoat silhouettes and chairs, twin-chamber revolver, and chess-clock life monitor. The projects embed a shared, desaturated material atlas.
-- `models.js` loads those `.bbmodel` assets into the game and preserves the existing aiming, slumping, revolver, and life-monitor animations.
+- `assets/blockbench/` contains editable Blockbench projects for the casino environment and veneer table, seated trenchcoat silhouettes and chairs, and chess-clock life monitor. The in-game weapon uses the supplied `iron_phantom.glb`; the shared, desaturated atlas gives the Blockbench assets hard-worn treatments: pitted oxide steel, abraded gunmetal, scratched walnut, bruised velvet, cracked concrete, and blood-dark enamel.
+- `models.js` loads the GLB and Blockbench assets, scales seated players to at least 3× their previous size, and positions the imported weapon in the holder's hand.
 - `scripts/build_blockbench_assets.mjs` regenerates the Blockbench projects and texture atlas.
-- `main.js` positions the seats around the table and applies the high-contrast warm/cool lighting, bloom, film grain, chromatic fringing, and lens breathing.
+- `main.js` gives each player a three-needle life clock, removes one needle immediately on a hit, and lets the active player click another player's body or use the lower-center self-shot button. Targeting falls back to nearby head/torso screen positions when a click misses a model mesh; rejected targets are reported without advancing the turn. It also animates self-aiming and hit reactions, spaces oversized seats, moves the room behind the table, and keeps the industrial fever-noir lighting and post-processing.
 - `index.html` is the game entry point.
 
-The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed; dreamlike post-processing swells during spins, aiming and shots.
+The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed; lens distortion and grain intensify during spins, aiming, and shots.
 
 ## Validation
 

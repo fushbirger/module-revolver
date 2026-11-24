@@ -34,8 +34,6 @@
       #lobbyBox { box-sizing: border-box; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
       #partyEntries { min-width: 0 !important; }
       input, select { font-size: 16px; }
-      #roster { top: max(8px, env(safe-area-inset-top)) !important; gap: 4px !important; }
-      #roster > div { padding: 3px 5px !important; font-size: 9px !important; }
       #msg { font-size: 11px !important; line-height: 1.35; }
       #ui {
         left: 50% !important;
@@ -58,16 +56,6 @@
         align-items: center;
         gap: 8px;
       }
-      #targetChoices {
-        display: flex;
-        max-width: 100%;
-        gap: 8px;
-        overflow-x: auto;
-        overscroll-behavior-x: contain;
-        padding: 2px;
-        scrollbar-width: thin;
-      }
-      #targetChoices button { flex: 0 0 auto; }
       #resetRow { bottom: max(10px, env(safe-area-inset-bottom)) !important; }
       #lobbyBox { width: min(100%, 440px); min-width: 0 !important; max-width: 100% !important; }
     }

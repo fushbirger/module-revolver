@@ -405,8 +405,16 @@ const handlers = {
   pick(c, m) {
     const room = rooms.get(c.roomId);
     if (!room || !isHolder(room, c)) return;
+    if (room.phase !== 'SELECTING' && room.phase !== 'NEIGHBOR') return;
     const i = Number(m.i);
-    if (!Number.isInteger(i) || i < 0 || i >= room.seats.length || room.seats[i].dead) return;
+    const neighborPick = room.phase === 'NEIGHBOR'
+      && room.neighbors
+      && (i === room.neighbors.left || i === room.neighbors.right);
+    if (!Number.isInteger(i) || i < 0 || i >= room.seats.length
+      || room.seats[i].dead || (room.phase === 'NEIGHBOR' && !neighborPick)) {
+      send(c, { t: 'err', msg: 'TARGET UNAVAILABLE — CLICK A LIVING PLAYER' });
+      return 'nochange';
+    }
     if (room.phase === 'SELECTING') doPick(room, i);
     else if (room.phase === 'NEIGHBOR') doNeighbor(room, i);
   },

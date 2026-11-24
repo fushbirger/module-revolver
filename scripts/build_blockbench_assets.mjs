@@ -6,18 +6,18 @@ const output = new URL('../assets/blockbench/', import.meta.url);
 const size = 256;
 const tileSize = 64;
 const materials = [
-  { name: 'charcoal_fabric', color: [37, 39, 42], kind: 'fabric' },
-  { name: 'oxide_steel', color: [57, 59, 61], kind: 'metal' },
-  { name: 'worn_steel', color: [112, 111, 106], kind: 'metal' },
-  { name: 'dark_veneer', color: [47, 35, 29], kind: 'wood' },
-  { name: 'oxblood_velvet', color: [57, 13, 19], kind: 'velvet' },
-  { name: 'black_leather', color: [25, 20, 20], kind: 'leather' },
-  { name: 'aged_brass', color: [125, 105, 69], kind: 'metal' },
-  { name: 'dial_ivory', color: [164, 157, 139], kind: 'paper' },
-  { name: 'stained_concrete', color: [38, 39, 41], kind: 'concrete' },
-  { name: 'red_lining', color: [89, 20, 27], kind: 'fabric' },
-  { name: 'face_shadow', color: [12, 13, 15], kind: 'concrete' },
-  { name: 'black_enamel', color: [19, 20, 22], kind: 'metal' }
+  { name: 'charcoal_fabric', color: [29, 31, 33], kind: 'fabric' },
+  { name: 'oxide_steel', color: [46, 50, 53], kind: 'metal' },
+  { name: 'worn_steel', color: [91, 94, 94], kind: 'metal' },
+  { name: 'dark_veneer', color: [37, 32, 29], kind: 'wood' },
+  { name: 'oxblood_velvet', color: [42, 14, 19], kind: 'velvet' },
+  { name: 'black_leather', color: [21, 19, 19], kind: 'leather' },
+  { name: 'aged_brass', color: [103, 91, 64], kind: 'metal' },
+  { name: 'dial_ivory', color: [151, 145, 128], kind: 'paper' },
+  { name: 'stained_concrete', color: [39, 41, 43], kind: 'concrete' },
+  { name: 'red_lining', color: [91, 20, 27], kind: 'blood' },
+  { name: 'face_shadow', color: [8, 9, 11], kind: 'concrete' },
+  { name: 'black_enamel', color: [15, 17, 19], kind: 'metal' }
 ];
 
 function hash(x, y, seed) {
@@ -32,21 +32,74 @@ function pixelAtlas() {
     const material = materials[index];
     const x0 = (index % 4) * tileSize;
     const y0 = Math.floor(index / 4) * tileSize;
+    const strokeCount = material.kind === 'metal' ? 23
+      : material.kind === 'concrete' ? 15
+        : material.kind === 'blood' ? 18 : 12;
+    const strokes = Array.from({ length: strokeCount }, (_, stroke) => {
+      const x = hash(stroke, 1, index + 101) * tileSize;
+      const y = hash(stroke, 2, index + 137) * tileSize;
+      const angle = (hash(stroke, 3, index + 173) - 0.5) * Math.PI;
+      const length = 7 + hash(stroke, 4, index + 211) * (material.kind === 'concrete' ? 38 : 32);
+      return {
+        x, y, dx: Math.cos(angle) * length, dy: Math.sin(angle) * length,
+        width: hash(stroke, 5, index + 251) > 0.78 ? 1.7 : 0.8,
+        shade: hash(stroke, 6, index + 293) > 0.48 ? 38 : -38
+      };
+    });
     for (let y = 0; y < tileSize; y++) {
       for (let x = 0; x < tileSize; x++) {
-        const noise = (hash(x, y, index + 29) - 0.5) * 21;
-        const grain = material.kind === 'wood'
-          ? Math.sin(y * 0.39 + Math.sin(x * 0.13) * 2) * 9
-          : material.kind === 'fabric'
-            ? ((x + y) % 4 === 0 ? 5 : -2)
-            : material.kind === 'metal' && (y + Math.floor(x * 0.12)) % 19 === 0
-              ? 17
-              : 0;
-        const shade = Math.round(noise + grain);
+        const broad = (hash(Math.floor(x / 6), Math.floor(y / 6), index + 29) - 0.5) * 27;
+        const grainNoise = (hash(x, y, index + 53) - 0.5) * 15;
+        let grain = 0;
+        if (material.kind === 'metal') {
+          grain = Math.sin(y * 1.65 + Math.sin(x * 0.12) * 2.4) * 5;
+          if ((y + Math.floor(x * 0.17)) % 17 === 0) grain += 13;
+        } else if (material.kind === 'wood') {
+          grain = Math.sin(y * 0.53 + Math.sin(x * 0.16) * 2.8) * 11
+            + Math.sin(y * 0.19 + x * 0.025) * 6;
+          const knot = Math.hypot((x % 38) - 19, (y % 29) - 14);
+          if (knot < 3.2) grain -= (1 - knot / 3.2) * 22;
+        } else if (material.kind === 'fabric') {
+          grain = ((x * 3 + y * 5) % 7 === 0 ? 7 : -2)
+            + Math.sin((x + y) * 0.42) * 2;
+        } else if (material.kind === 'velvet') {
+          grain = Math.sin(y * 0.36 + Math.sin(x * 0.1) * 1.5) * 12
+            + (hash(x, Math.floor(y / 3), index + 79) - 0.5) * 8;
+        } else if (material.kind === 'leather') {
+          grain = (hash(Math.floor(x / 2), Math.floor(y / 2), index + 83) - 0.5) * 13;
+          if ((x * 7 + y * 11) % 31 === 0) grain -= 12;
+        } else if (material.kind === 'concrete') {
+          grain = (hash(Math.floor(x / 11), Math.floor(y / 9), index + 97) - 0.5) * 23;
+        } else if (material.kind === 'paper') {
+          grain = Math.sin(x * 0.2 + y * 0.08) * 3
+            + (hash(Math.floor(x / 4), Math.floor(y / 4), index + 109) - 0.5) * 17;
+        } else if (material.kind === 'blood') {
+          grain = Math.sin(x * 0.3 + Math.sin(y * 0.08) * 1.8) * 12
+            + Math.sin(x * 0.71) * 4;
+          if (hash(Math.floor(x / 3), Math.floor(y / 3), index + 127) > 0.9) grain -= 32;
+        }
+
+        let wear = 0;
+        for (const stroke of strokes) {
+          const along = Math.max(0, Math.min(1,
+            ((x - stroke.x) * stroke.dx + (y - stroke.y) * stroke.dy)
+              / (stroke.dx * stroke.dx + stroke.dy * stroke.dy)));
+          const distance = Math.hypot(
+            x - stroke.x - stroke.dx * along,
+            y - stroke.y - stroke.dy * along
+          );
+          if (distance < stroke.width) wear += stroke.shade * (1 - distance / stroke.width);
+        }
+
+        const shade = Math.round(broad + grainNoise + grain + wear);
+        const rust = material.name === 'oxide_steel'
+          && hash(Math.floor(x / 4), Math.floor(y / 5), index + 149) > 0.84 ? 18 : 0;
+        const patina = material.name === 'aged_brass'
+          && hash(Math.floor(x / 5), Math.floor(y / 4), index + 157) > 0.91 ? 12 : 0;
         const offset = ((y0 + y) * size + x0 + x) * 4;
-        rgba[offset] = Math.max(0, Math.min(255, material.color[0] + shade));
-        rgba[offset + 1] = Math.max(0, Math.min(255, material.color[1] + shade));
-        rgba[offset + 2] = Math.max(0, Math.min(255, material.color[2] + shade));
+        rgba[offset] = Math.max(0, Math.min(255, material.color[0] + shade + rust - patina));
+        rgba[offset + 1] = Math.max(0, Math.min(255, material.color[1] + shade - rust * 0.36 + patina * 0.25));
+        rgba[offset + 2] = Math.max(0, Math.min(255, material.color[2] + shade - rust * 0.56 + patina * 0.4));
         rgba[offset + 3] = 255;
       }
     }
@@ -57,11 +110,12 @@ function pixelAtlas() {
     for (let x = 0; x < size; x++) {
       const border = x < 3 || x >= size - 3 || y < signY + 3 || y >= size - 3;
       const panel = y >= signY + 15 && y < signY + 50 && x >= 12 && x < size - 12;
-      const color = border ? [132, 112, 75] : panel ? [110, 22, 30] : [19, 20, 22];
+      const distress = (hash(x, y, 401) - 0.5) * (panel ? 24 : 12);
+      const color = border ? [106, 92, 63] : panel ? [91, 20, 27] : [15, 17, 19];
       const offset = (y * size + x) * 4;
-      rgba[offset] = color[0];
-      rgba[offset + 1] = color[1];
-      rgba[offset + 2] = color[2];
+      rgba[offset] = Math.max(0, Math.min(255, color[0] + distress));
+      rgba[offset + 1] = Math.max(0, Math.min(255, color[1] + distress));
+      rgba[offset + 2] = Math.max(0, Math.min(255, color[2] + distress));
       rgba[offset + 3] = 255;
     }
   }

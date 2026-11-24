@@ -4,7 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { mk, preloadBlockbenchAssets, createEnvironment, createGun, createMachine, createMafiaPlayer } from './models.js';
+import { mk, preloadBlockbenchAssets, createEnvironment, createGun, createMachine, createMafiaPlayer, PLAYER_SCALE } from './models.js';
 
 await preloadBlockbenchAssets();
 
@@ -14,7 +14,7 @@ const RING_RX = 3.45, RING_RZ = 3.45, RING_CZ = 0.15; // seats follow the round 
 const BASE_CAM = new THREE.Vector3(0.0, 2.05, 6.8);
 const LOOK = new THREE.Vector3(0.0, 0.92, -0.45);
 let camSpread = 3.0;
-let machine = null;
+let machines = [];
 let players = [];
 
 /* ================================================================ server state
@@ -88,9 +88,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 composer.addPass(new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.62,
-  0.7,
-  0.9
+  0.38,
+  0.42,
+  0.82
 ));
 const dreamPass = new ShaderPass({
   uniforms: {
@@ -135,8 +135,9 @@ const dreamPass = new ShaderPass({
       color.g = texture2D(tDiffuse, warpedUv).g;
       color.b = texture2D(tDiffuse, warpedUv - direction * aberration).b;
       float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luminance), color, 0.9);
-      color *= vec3(1.04, 0.97, 0.94);
+      color = mix(vec3(luminance), color, 0.62);
+      color = max(vec3(0.0), (color - 0.025) * 1.12);
+      color *= vec3(1.02, 0.96, 0.94);
       color += (1.0 - smoothstep(0.04, 0.46, luminance))
         * vec3(0.024, 0.003, 0.012) * (0.5 + uIntensity * 0.35);
       float vignette = 1.0 - smoothstep(0.28, 0.78, radius);
@@ -161,7 +162,7 @@ function updateResponsiveCamera() {
   if (viewer) {
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(viewer.root.quaternion);
     baseCamPos.copy(viewer.root.position).addScaledVector(forward, 0.12);
-    baseCamPos.y = viewer.root.position.y + 1.56;
+    baseCamPos.y = viewer.root.position.y + 1.56 * PLAYER_SCALE;
   } else {
     // Keep the room overview while the player is in the party screens.
     const dir = BASE_CAM.clone().sub(LOOK);
@@ -170,7 +171,7 @@ function updateResponsiveCamera() {
     baseCamPos.copy(LOOK).addScaledVector(dir, k);
   }
   camera.position.copy(baseCamPos);
-  if (viewer) camera.lookAt(GUN_X, 0.92, GUN_Z);
+  if (viewer) camera.lookAt(GUN_X, viewer.root.position.y + 0.78 * PLAYER_SCALE, GUN_Z);
   else camera.lookAt(LOOK);
   cameraRoll = 0;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
@@ -183,22 +184,22 @@ function updateResponsiveCamera() {
 updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
 
-const spot = new THREE.SpotLight(0xffe6c1, 178, 18, Math.PI / 5.2, 0.24, 1.15);
+const spot = new THREE.SpotLight(0xffe6c1, 240, 18, Math.PI / 7.5, 0.14, 1.15);
 spot.position.set(0.0, 5.8, 1.2);
 spot.target.position.set(0, 0.2, -0.3);
 spot.castShadow = true;
-const rim = new THREE.PointLight(0xb11822, 48, 14, 1.7);
+const rim = new THREE.PointLight(0x9b111b, 38, 12, 1.8);
 rim.position.set(0, 2.7, -6.2);
-const backFill = new THREE.PointLight(0x8fa6b4, 29, 12, 1.9);
+const backFill = new THREE.PointLight(0x78818b, 15, 10, 2);
 backFill.position.set(-5.2, 3.2, -3.8);
-const warmFill = new THREE.PointLight(0xffdca3, 12, 9, 1.7);
+const warmFill = new THREE.PointLight(0xdac6a0, 6, 8, 1.8);
 warmFill.position.set(4.8, 2.4, 1.4);
-const coldRim = new THREE.SpotLight(0xa6b5d0, 105, 16, Math.PI / 6.5, 0.22, 1.2);
+const coldRim = new THREE.SpotLight(0x9aa9bd, 72, 13, Math.PI / 7, 0.16, 1.2);
 coldRim.position.set(-5.2, 4.2, -3.8);
 coldRim.target.position.set(0, 0.8, 0);
 coldRim.castShadow = true;
 scene.add(
-  new THREE.HemisphereLight(0x7d8998, 0x09080b, 0.24),
+  new THREE.HemisphereLight(0x7d8998, 0x09080b, 0.1),
   spot, spot.target, rim, backFill, warmFill, coldRim, coldRim.target
 );
 
@@ -229,49 +230,49 @@ function clearSeats() {
   };
   players.forEach(p => disposeObject(p.root));
   players = [];
-  if (machine) { disposeObject(machine.root); machine = null; }
+  machines.forEach(machine => disposeObject(machine.root));
+  machines = [];
   camSpread = 3.0;
   updateResponsiveCamera();
 }
 function buildSeats(n) {
   clearSeats();
+  const seatWidth = (18 / 16) * PLAYER_SCALE * 1.08;
+  const ringRadius = Math.max(RING_RX, seatWidth / (2 * Math.sin(Math.PI / n)));
   for (let i = 0; i < n; i++) {
     const ang = (i / n) * Math.PI * 2;
-    const x = RING_RX * Math.sin(ang);
-    const z = RING_CZ - RING_RZ * Math.cos(ang);
+    const x = ringRadius * Math.sin(ang);
+    const z = RING_CZ - ringRadius * Math.cos(ang);
     const rotY = Math.atan2(GUN_X - x, GUN_Z - z);       // seat faces the gun
     const pl = createMafiaPlayer(scene, x, 0.14, z, rotY, i);
     pl.root.userData.idx = i;
     pl.deadAt = 0;
     players.push(pl);
   }
-  machine = createMachine(scene, n);
-  const viewer = S.you >= 0 ? players[S.you] : null;
-  if (viewer) {
-    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(viewer.root.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(viewer.root.quaternion);
-    machine.root.position.copy(viewer.root.position)
-      .addScaledVector(forward, 1.9)
-      .addScaledVector(right, 0.65);
-    machine.root.position.y = 0.14;
-    machine.root.rotation.y = viewer.root.rotation.y + Math.PI;
-    machine.root.scale.setScalar(Math.min(0.6, 1.6 / Math.max(1.3, n * 0.4 + 0.2)));
-  }
-  camSpread = RING_RX + 1.0;
+  const clockRadius = Math.max(2.75, (86 / 16 * 0.5 * 1.08) / (2 * Math.sin(Math.PI / n)));
+  machines = players.map(player => {
+    const machine = createMachine(scene);
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.root.quaternion);
+    machine.root.position.copy(player.root.position)
+      .addScaledVector(forward, ringRadius - clockRadius);
+    machine.root.position.y = 0.29;
+    machine.root.rotation.y = player.root.rotation.y;
+    machine.root.scale.multiplyScalar(0.5);
+    return machine;
+  });
+  camSpread = ringRadius + 1.0;
   updateResponsiveCamera();
 }
 
 /* ================================================================ HTML overlay */
 document.body.insertAdjacentHTML('beforeend', `
-  <div id="roster" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);display:none;flex-wrap:wrap;justify-content:center;gap:6px;width:96%;z-index:10;pointer-events:none"></div>
   <div id="msg" style="position:fixed;top:58px;left:50%;transform:translateX(-50%);font-size:13px;color:#b89f65;text-align:center;width:92%;z-index:10;pointer-events:none"></div>
   <div id="ui" style="position:fixed;display:none;flex-direction:column;gap:6px;transform:translate(14px,-50%);z-index:10">
     <button id="bStart" disabled style="padding:8px 12px;background:#132419;border:2px solid #3b8c5a;color:#52b878;font-family:inherit;font-size:12px;font-weight:bold;opacity:0.4">START</button>
     <button id="bStop" disabled style="padding:8px 12px;background:#261012;border:2px solid #9e1b24;color:#c92a34;font-family:inherit;font-size:12px;font-weight:bold;opacity:0.4">STOP</button>
   </div>
   <div id="pick" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
-    <button id="bSelf" style="padding:10px 18px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px;font-weight:bold">YOURSELF</button>
-    <div id="targetChoices" aria-label="Choose a player"></div>
+    <button id="bSelf" style="padding:10px 18px;background:#161518;border:2px solid #9e1b24;color:#ddd4c2;font-family:inherit;font-size:13px;font-weight:bold">SHOOT YOURSELF</button>
   </div>
   <div id="resetRow" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
     <button id="bReset" style="padding:11px 16px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px">NEW MATCH</button>
@@ -282,14 +283,12 @@ document.body.insertAdjacentHTML('beforeend', `
     <div id="lobbyBox" style="min-width:260px;max-width:90%;background:#0b0a0c;border:2px solid #8a7b5d;padding:18px;font-size:13px;color:#ddd4c2;line-height:1.7"></div>
   </div>
 `);
-const rosterEl = document.getElementById('roster');
 const msgEl    = document.getElementById('msg');
 const uiEl     = document.getElementById('ui');
 const bStart   = document.getElementById('bStart');
 const bStop    = document.getElementById('bStop');
 const pickEl   = document.getElementById('pick');
 const bSelf    = document.getElementById('bSelf');
-const targetChoices = document.getElementById('targetChoices');
 const resetRow = document.getElementById('resetRow');
 const bReset   = document.getElementById('bReset');
 const lobbyEl  = document.getElementById('lobby');
@@ -413,17 +412,6 @@ let msgHold = { text: '', until: 0 };
 function hold(text, ms) { msgHold = { text, until: performance.now() + ms }; }
 let lastMsg = '';
 function setMsg(text) { if (text !== lastMsg) { lastMsg = text; msgEl.textContent = text; } }
-
-function renderRoster() {
-  rosterEl.innerHTML = S.players.map((p, i) => {
-    const active = i === S.active && S.phase !== 'GAME_OVER';
-    const border = p.dead ? '#333' : (active ? '#d4be83' : '#9e1b24');
-    const color  = p.dead ? '#555' : (active ? '#f2eadc' : '#c92a34');
-    return `<div style="background:rgba(8,7,10,0.92);border:2px solid ${border};padding:4px 8px;font-size:11px;color:${color}">
-      ${p.name}${i === S.you ? ' (YOU)' : ''}: <b>${p.dead ? 'OUT' : p.lives}</b></div>`;
-  }).join('');
-  msgEl.style.top = (rosterEl.offsetHeight + 16) + 'px';
-}
 
 /* ---------------------------------------------------------------- lobby */
 let lobbySig = '';
@@ -569,23 +557,15 @@ function applyState(m) {
     if (sp.dead && !wasDead) p.deadAt = performance.now();
   });
 
-  // visual-only: the cylinder coasts to a stop. Chambers look identical, so this reveals nothing.
-  if (S.phase === 'SETTLING' && prev.phase !== 'SETTLING') {
-    const base = Math.random() < 0.5 ? 0 : Math.PI;
-    cylTarget = base + (Math.ceil((gun.cyl.rotation.z - base) / (Math.PI * 2)) + 2) * Math.PI * 2;
-  }
-
   const me = S.you >= 0 && S.you === S.active;
   const inGame = S.phase !== 'LOBBY' && S.phase !== 'PARTIES';
   setControls(S.phase === 'IDLE' && me, S.phase === 'SPINNING' && me);
   uiEl.style.display = inGame && S.phase !== 'GAME_OVER' ? 'flex' : 'none';
   const canSelect = me && S.phase === 'SELECTING';
   const canPassOnTouch = me && touchUi && S.phase === 'NEIGHBOR';
-  pickEl.style.display = canSelect ? (touchUi ? 'flex' : 'block') : (canPassOnTouch ? 'flex' : 'none');
-  renderPickChoices();
+  pickEl.style.display = canSelect || canPassOnTouch ? 'flex' : 'none';
+  renderSelfChoice();
   resetRow.style.display = S.phase === 'GAME_OVER' && S.you === S.host ? 'block' : 'none';
-  rosterEl.style.display = inGame ? 'flex' : 'none';
-  renderRoster();
   renderLobby();
 
   if (quick && !quickDone && S.phase === 'LOBBY' && S.you >= 0 && S.host === S.you) {
@@ -597,7 +577,7 @@ function applyState(m) {
 
 let lampOverride = 0, lampUntil = 0;
 const lamp = (hex, ms) => { lampOverride = hex; lampUntil = performance.now() + ms; };
-let shake = 0, finalFlash = 0, tAng = 0;
+let shake = 0, finalFlash = 0;
 
 function burst(i) {
   const p = players[i]; if (!p) return;
@@ -610,16 +590,20 @@ function burst(i) {
 }
 function onEvent(m) {
   const nm = (i) => (S.players[i] ? S.players[i].name : '?');
-  const pullTrigger = () => { tAng = 0.45; setTimeout(() => { tAng = 0; }, 140); };
   if (m.e === 'blank') {
     dreamPulse = Math.max(dreamPulse, 0.38);
     playDryClick();
-    pullTrigger(); lamp(0x3b6e6c, 1000);
+    lamp(0x3b6e6c, 1000);
     hold(m.target === m.by ? `*CLICK* — BLANK! ${nm(m.by)} GOES AGAIN` : `*CLICK* — BLANK! ${nm(m.target)} TAKES THE GUN`, 1600);
   } else if (m.e === 'shot') {
     dreamPulse = 1;
     playGunshot();
-    pullTrigger(); shake = 0.24; gunKick = 0.20; lamp(0x9e1b24, 1100);
+    if (Number.isInteger(m.lives) && players[m.target]) {
+      players[m.target].lives = m.lives;
+      machines[m.target]?.needles.forEach((needle, index) => { needle.visible = index < m.lives; });
+    }
+    if (!m.dead && players[m.target]) players[m.target].hitAt = performance.now();
+    shake = 0.24; gunKick = 0.08; lamp(0x9e1b24, 1100);
     if (m.dead) { burst(m.target); hold(`${nm(m.target)} ELIMINATED!`, 1700); }
     else hold(`BANG! ${nm(m.target)} DROPS TO ${m.lives} ${m.lives === 1 ? 'LIFE' : 'LIVES'}`, 1500);
   } else if (m.e === 'timeout') {
@@ -665,28 +649,8 @@ function statusText() {
 /* ================================================================ picking players in the 3D scene */
 const mySelecting = () => S.you >= 0 && S.you === S.active && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR');
 const touchUi = window.matchMedia('(pointer: coarse)').matches;
-function renderPickChoices() {
-  const choosing = mySelecting();
-  const showChoices = touchUi && choosing;
-  bSelf.style.display = S.phase === 'SELECTING' ? '' : 'none';
-  targetChoices.replaceChildren();
-  targetChoices.style.display = showChoices ? 'flex' : 'none';
-  if (!showChoices) return;
-
-  const indexes = S.phase === 'NEIGHBOR'
-    ? [S.neighbors.left, S.neighbors.right]
-    : S.players.map((_, i) => i).filter(i => i !== S.active && !S.players[i].dead);
-  for (const i of indexes) {
-    const player = S.players[i];
-    if (!player || player.dead) continue;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = `${S.phase === 'NEIGHBOR' ? 'PASS' : 'SHOOT'} ${player.name}`;
-    button.setAttribute('aria-label', `${S.phase === 'NEIGHBOR' ? 'Pass the gun to' : 'Shoot'} ${player.name}`);
-    button.style.cssText = 'padding:10px 12px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:12px;font-weight:bold';
-    button.onclick = () => { if (mySelecting()) { send({ t: 'pick', i }); setHover(null); } };
-    targetChoices.append(button);
-  }
+function renderSelfChoice() {
+  bSelf.style.display = S.you === S.active && S.phase === 'SELECTING' ? 'block' : 'none';
 }
 function allowed(i) {
   if (!S.players[i] || S.players[i].dead) return false;
@@ -695,6 +659,7 @@ function allowed(i) {
 }
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
+const projectedTarget = new THREE.Vector3();
 function pickPlayerAt(ev) {
   ndc.set((ev.clientX / window.innerWidth) * 2 - 1, -(ev.clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
@@ -705,7 +670,27 @@ function pickPlayerAt(ev) {
     while (o && o.userData.idx === undefined) o = o.parent;
     if (o && allowed(o.userData.idx)) return o.userData.idx;
   }
-  return null;
+
+  camera.updateMatrixWorld(true);
+  const maxDistance = Math.max(56, Math.min(96, Math.min(window.innerWidth, window.innerHeight) * 0.14));
+  let nearest = null;
+  let nearestDistance = maxDistance;
+  players.forEach((player, index) => {
+    if (index === S.you || !allowed(index)) return;
+    player.root.updateMatrixWorld(true);
+    for (const part of [player.head, player.body]) {
+      part.getWorldPosition(projectedTarget).project(camera);
+      if (projectedTarget.z < -1 || projectedTarget.z > 1) continue;
+      const x = (projectedTarget.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-projectedTarget.y * 0.5 + 0.5) * window.innerHeight;
+      const distance = Math.hypot(ev.clientX - x, ev.clientY - y);
+      if (distance < nearestDistance) {
+        nearest = index;
+        nearestDistance = distance;
+      }
+    }
+  });
+  return nearest;
 }
 function setHover(i) {
   if (i === hoverLocal) return;
@@ -729,7 +714,7 @@ bSelf.onpointerleave = () => { if (mySelecting()) setHover(null); };
 bSelf.onclick = () => { if (mySelecting()) send({ t: 'pick', i: S.active }); };
 
 /* ================================================================ animation */
-let spd = 0, cylTarget = null, gunKick = 0;
+let gunKick = 0;
 function angleDiff(a, b) { return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }
 
 const clock = new THREE.Clock();
@@ -753,14 +738,7 @@ function animate() {
   dreamPass.uniforms.uPulse.value = Math.max(dreamPulse, ambientDream);
   dreamPulse *= Math.pow(0.035, dt);
 
-  // primer (thumb lever): pulled while spinning; hammer cocked until the shot
-  const lAng = spinning ? 0.55 : 0;
-  const hAng = ['SPINNING', 'SETTLING', 'SELECTING', 'AIMING'].includes(ph) ? -0.58 : 0;
-  gun.primer.rotation.x += (lAng - gun.primer.rotation.x) * 14 * dt;
-  gun.hammer.rotation.x += (hAng - gun.hammer.rotation.x) * 18 * dt;
-  gun.trigger.rotation.x += (tAng - gun.trigger.rotation.x) * 20 * dt;
-
-  // The active player holds the revolver and tracks the selected or hovered target.
+  // The active player holds the imported weapon and tracks the selected or hovered target.
   const hi = mySelecting() ? hoverLocal : ((ph === 'SELECTING' || ph === 'NEIGHBOR') ? hoverRemote : null);
   let aimIndex = null;
   if (ph === 'AIMING' || ph === 'RESOLVING') aimIndex = S.target;
@@ -776,6 +754,10 @@ function animate() {
       const headTilt = p.headTilt + Math.sin(t * 0.23 + i * 1.4) * 0.012;
       p.head.rotation.z += (headTilt - p.head.rotation.z) * 0.8 * dt;
       p.body.scale.y = p.bodyHeightScale * (1 + Math.sin(t * 0.73 + i * 1.7) * 0.007);
+      const hitProgress = Math.min(1, (now - p.hitAt) / 520);
+      const hitFlinch = p.hitAt > 0 && hitProgress < 1 ? Math.sin(hitProgress * Math.PI) : 0;
+      p.body.rotation.x += (-0.24 * hitFlinch - p.body.rotation.x) * Math.min(1, 18 * dt);
+      p.body.position.z += (-0.1 * hitFlinch - p.body.position.z) * Math.min(1, 18 * dt);
     }
     if (now >= p.nextBlinkAt) {
       p.blinkUntil = now + 120;
@@ -789,8 +771,11 @@ function animate() {
     if (!p.isDead) {
       const pulling = spinning && i === S.active;
       const holding = i === S.active && ph !== 'LOBBY';
+      const selfAiming = i === S.active && aimIndex === i
+        && ['SELECTING', 'AIMING', 'RESOLVING'].includes(ph);
       const armYaw = Math.atan2(aimPoint.x - p.root.position.x, aimPoint.z - p.root.position.z);
-      p.arm.rotation.x += (((pulling || holding) ? 0.4 : 0) - p.arm.rotation.x) * 10 * dt;
+      const armPitch = selfAiming ? -1.05 : (pulling || holding ? 0.4 : 0);
+      p.arm.rotation.x += (armPitch - p.arm.rotation.x) * 10 * dt;
       p.arm.rotation.y += ((holding ? angleDiff(armYaw, p.root.rotation.y) : 0) - p.arm.rotation.y) * 10 * dt;
     } else if (p.deadAt) {
       const fall = Math.min(1, (now - p.deadAt) / 700);
@@ -808,60 +793,50 @@ function animate() {
     }
     p.glow.emissiveIntensity += (want - p.glow.emissiveIntensity) * 12 * dt;
 
-    if (machine && machine.needles[i]) {
-      const frac = p.isDead ? 0 : p.lives / S.maxLives;
-      const jitter = frac > 0 && frac < 0.5 ? Math.sin(t * 40 + i) * 0.02 : 0;
-      const n = machine.needles[i];
-      n.rotation.z += ((-0.9 + (1 - frac) * 1.8 + jitter) - n.rotation.z) * 6 * dt;   // full = right, dead = left
-    }
-    if (machine && machine.lifeLevels[i] !== p.lives) {
+    if (machines[i]) {
       const lives = Math.max(0, Math.min(3, p.lives));
-      const activeColor = lives === 1 ? 0xc52c35 : lives === 2 ? 0xc6a45e : 0x9aa99b;
-      machine.lifeSegments[i].forEach((material, segment) => {
-        material.color.setHex(segment < lives ? activeColor : 0x343538);
-      });
-      machine.lifeLevels[i] = p.lives;
+      machines[i].needles.forEach((needle, index) => { needle.visible = index < lives; });
+      machines[i].screenMat.color.setHex(i === S.active ? 0x3b8c5a : 0x343538);
     }
   });
 
-  // Only the cylinder spins; the revolver stays in its holder's hand.
-  if (spinning) {
-    spd = Math.min(spd + 28 * dt, 18);
-    gun.cyl.rotation.z += spd * 2.4 * dt;
-  } else {
-    spd *= Math.pow(0.04, dt);
-    if (cylTarget !== null) {
-      gun.cyl.rotation.z += (cylTarget - gun.cyl.rotation.z) * Math.min(1, 4 * dt);
-      if (Math.abs(cylTarget - gun.cyl.rotation.z) < 0.02) { gun.cyl.rotation.z = cylTarget; cylTarget = null; }
-    } else if (spd > 0) {
-      gun.cyl.rotation.z += spd * 2.4 * dt;
-    }
-  }
   const holder = players[S.active];
   if (holder) {
     holder.hand.getWorldPosition(handPosition);
-    const yaw = Math.atan2(aimPoint.x - handPosition.x, aimPoint.z - handPosition.z);
+    const aimX = aimPoint.x - handPosition.x;
+    const aimY = aimPoint.y - handPosition.y;
+    const aimZ = aimPoint.z - handPosition.z;
+    const yaw = Math.atan2(aimX, aimZ);
+    const pitch = -Math.atan2(aimY, Math.hypot(aimX, aimZ));
     gun.root.rotation.y += angleDiff(yaw, gun.root.rotation.y) * 8 * dt;
+    gun.root.rotation.x += angleDiff(pitch, gun.root.rotation.x) * 8 * dt;
     gun.root.position.copy(handPosition);
-    gun.root.position.y += 0.37;
+    const forwardX = Math.sin(gun.root.rotation.y);
+    const forwardZ = Math.cos(gun.root.rotation.y);
+    gun.root.position.y += 0.12;
+    gun.root.position.x += forwardX * 0.18;
+    gun.root.position.z += forwardZ * 0.18;
     gunKick *= Math.pow(0.02, dt);
-    gun.root.position.z += gunKick;
+    gun.root.position.x -= forwardX * gunKick;
+    gun.root.position.z -= forwardZ * gunKick;
   } else {
     gun.root.position.set(GUN_X, 0.62, GUN_Z);
     gunKick = 0;
   }
 
   // lights, status lamp
-  spot.intensity = 178 * (0.96 + Math.sin(t * 0.27) * 0.025);
-  coldRim.intensity = 105 * (0.94 + Math.sin(t * 0.19 + 1.3) * 0.06);
+  spot.intensity = 240 * (0.96 + Math.sin(t * 0.27) * 0.025);
+  coldRim.intensity = 72 * (0.94 + Math.sin(t * 0.19 + 1.3) * 0.06);
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0x3b8c5a : 0x8f7a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
     lampHex = Math.sin(t * 50) > 0 ? 0xff1e27 : 0x111111;
     rim.intensity = 22 + finalFlash * 45;
     finalFlash *= Math.pow(0.08, dt);
-  } else rim.intensity = 44 + Math.sin(t * 0.32) * 4;
-  if (machine) machine.screenMat.color.setHex(lampHex);
+  } else rim.intensity = 35 + Math.sin(t * 0.32) * 3;
+  machines.forEach((machine, index) => {
+    machine.screenMat.color.setHex(index === S.active ? lampHex : 0x343538);
+  });
 
   if (shake > 0.001) {
     camera.position.set(

@@ -1,8 +1,11 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const MODEL_PATH = new URL('./assets/blockbench/', import.meta.url);
 const modelTemplates = new Map();
 const textureCache = new Map();
+const BLOCKBENCH_SCALE = 1 / 16;
+export const PLAYER_SCALE = 3.2;
 
 export function mk(geometry, material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, cast = true) {
   const mesh = new THREE.Mesh(geometry, material);
@@ -26,13 +29,13 @@ function makeMaterial(texture, name) {
   const wood = /wood|veneer|chair|pedestal/i.test(name);
   const material = new THREE.MeshStandardMaterial({
     map: texture,
-    roughness: metal ? 0.42 : fabric ? 0.94 : wood ? 0.66 : 0.82,
-    metalness: metal ? 0.68 : 0.02,
+    roughness: metal ? 0.72 : fabric ? 0.99 : wood ? 0.84 : 0.92,
+    metalness: metal ? 0.5 : 0.01,
     side: THREE.DoubleSide
   });
   if (texture && (metal || fabric || wood)) {
     material.bumpMap = texture;
-    material.bumpScale = metal ? 0.003 : fabric ? 0.012 : 0.008;
+    material.bumpScale = metal ? 0.007 : fabric ? 0.024 : 0.016;
   }
   if (/fortuna lettering|status lamp/i.test(name)) {
     material.emissive.setHex(0x49321c);
@@ -150,7 +153,7 @@ function createProject(project, texture) {
   };
 
   for (const node of project.outliner || []) addOutlinerNode(node, root);
-  root.scale.setScalar(1 / 16);
+  root.scale.setScalar(BLOCKBENCH_SCALE);
   return root;
 }
 
@@ -180,11 +183,13 @@ export async function preloadBlockbenchAssets() {
   const assets = [
     ['casino_environment', 'casino_environment.bbmodel'],
     ['seated_mafioso', 'seated_mafioso.bbmodel'],
-    ['twin_chamber_revolver', 'twin_chamber_revolver.bbmodel'],
     ['chess_clock_monitor', 'chess_clock_monitor.bbmodel']
   ];
   const loaded = await Promise.all(assets.map(async ([key, filename]) => [key, await loadProject(filename)]));
   loaded.forEach(([key, model]) => modelTemplates.set(key, model));
+
+  const gunAsset = await new GLTFLoader().loadAsync(new URL('iron_phantom.glb', MODEL_PATH).href);
+  modelTemplates.set('iron_phantom', gunAsset.scene);
 }
 
 function cloneModel(key) {
@@ -217,7 +222,7 @@ function findMesh(root, name) {
 
 export function createEnvironment(scene) {
   const environment = cloneModel('casino_environment');
-  const backgroundOffset = 4;
+  const backgroundOffset = 64; // child transforms are in Blockbench units; the model root is scaled by 1/16.
   const roomShell = findObject(environment, 'Room Shell');
   roomShell.position.z -= backgroundOffset;
   findObject(roomShell, 'Stained concrete floor').position.z += backgroundOffset;
@@ -233,51 +238,54 @@ export function createEnvironment(scene) {
 }
 
 export function createGun(scene) {
-  const root = cloneModel('twin_chamber_revolver');
-  root.position.set(0, 0.62, 0.35);
+  const root = new THREE.Group();
+  root.name = 'Iron Phantom';
+  const model = cloneModel('iron_phantom');
+  model.rotation.y = Math.PI / 2;
+  model.scale.setScalar(0.36);
+  model.traverse(object => {
+    if (!object.isMesh) return;
+    object.material = new THREE.MeshStandardMaterial({
+      color: 0x626568,
+      metalness: 0.72,
+      roughness: 0.56
+    });
+    object.castShadow = true;
+    object.receiveShadow = true;
+  });
+  root.position.set(0, 0.42, 0.35);
+  root.add(model);
   scene.add(root);
-  return {
-    root,
-    cyl: findObject(root, 'Cylinder'),
-    hammer: findObject(root, 'Hammer'),
-    trigger: findObject(root, 'Trigger'),
-    primer: findObject(root, 'Primer')
-  };
+  return { root };
 }
 
-export function createMachine(scene, playerCount = 3) {
+export function createMachine(scene) {
   const root = cloneModel('chess_clock_monitor');
-  const housing = findObject(root, 'Housing');
+  cloneMaterials(root);
   const gaugeTemplate = findObject(root, 'Gauge');
   gaugeTemplate.removeFromParent();
-
-  const width = Math.max(1.3, playerCount * 0.4 + 0.2);
-  housing.scale.x = width * 16 / 84;
-  const spacing = ((width - 0.2) / playerCount) * 16;
-  const radius = Math.min(0.155, spacing / 16 * 0.39);
   const needles = [];
-  const lifeSegments = [];
-  const lifeLevels = Array(playerCount).fill(null);
-
-  for (let index = 0; index < playerCount; index++) {
-    const gauge = gaugeTemplate.clone(true);
-    gauge.name = `Gauge ${index + 1}`;
-    gauge.position.set((index - (playerCount - 1) / 2) * spacing, 5, 0);
-    gauge.scale.setScalar(radius / 0.169);
-    cloneMaterials(gauge);
-    root.add(gauge);
-    needles.push(findObject(gauge, 'Needle'));
-    lifeSegments.push([1, 2, 3].map(segment => findMesh(gauge, `Life indicator lamp ${segment}`).material));
+  const needleTemplate = findObject(gaugeTemplate, 'Needle');
+  needleTemplate.removeFromParent();
+  gaugeTemplate.scale.setScalar(4);
+  for (let index = 0; index < 3; index++) {
+    const needle = needleTemplate.clone(true);
+    needle.name = `Life needle ${index + 1}`;
+    needle.rotation.z = (index - 1) * 0.22;
+    cloneMaterials(needle);
+    const pointer = findMesh(needle, 'Red gauge needle');
+    pointer.material.emissive.setHex(0x681018);
+    pointer.material.emissiveIntensity = 0.7;
+    gaugeTemplate.add(needle);
+    needles.push(needle);
+    findObject(gaugeTemplate, `LifeSegment${index + 1}`).visible = false;
   }
 
-  root.position.set(0, 0.14, 1.85);
   scene.add(root);
   return {
     root,
     screenMat: findMesh(root, 'Front status lamp').material,
-    needles,
-    lifeSegments,
-    lifeLevels
+    needles
   };
 }
 
@@ -286,6 +294,7 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   cloneMaterials(root);
   root.position.set(x, y, z);
   root.rotation.y = rotY;
+  root.scale.setScalar(BLOCKBENCH_SCALE * PLAYER_SCALE);
   const variantIndex = Math.abs(Math.trunc(variant)) % 12;
   root.scale.y *= [0.97, 1.03, 1, 0.96, 1.04, 1.01, 0.98, 1.02, 0.95, 1.05, 0.99, 1.015][variantIndex];
   root.scale.x *= [0.98, 1.02, 0.95, 1.04, 0.99, 1.03, 1.05, 0.97, 1.01, 0.96, 1.025, 0.985][variantIndex];
@@ -347,6 +356,7 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
     eyes,
     nextBlinkAt: performance.now() + 1200 + Math.random() * 4000,
     blinkUntil: 0,
+    hitAt: 0,
     firstPersonParts: [
       findObject(root, 'Torso'),
       findObject(root, 'Legs'),
