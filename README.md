@@ -27,15 +27,15 @@ The browser loads Three.js r160 from jsDelivr, so an internet connection is requ
 
 ## Updated scene models
 
-- `models.js` contains the fixed room, round pedestal table, chairs and seated shadow figures, plus the existing game prop and status machine models.
-- `main.js` positions the seats around the round table, uses the local player's first-person seated viewpoint during matches, and keeps scene lighting stable across turns and animations.
+- `models.js` contains the fixed room, round pedestal table, chairs, seated figures and a per-player life monitor with animated needles and status lamps.
+- `main.js` positions the seats around the round table, uses a desaturated industrial palette with hard warm/cool lighting, and layers subtle bloom, film grain, chromatic fringing and lens breathing over the scene.
 - `index.html` is the game entry point.
 
-The table and casino environment are created once and are not attached to round or player animations. The figures remain dark silhouettes; the room lights reveal their outlines rather than making them glow.
+The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed; dreamlike post-processing swells during spins, aiming and shots.
 
 ## Validation
 
-The updated JavaScript files pass Node syntax checks. The server's HTTP routes for the game page, `main.js` and `models.js` were checked locally. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
+The JavaScript files pass Node syntax checks, and the Three.js post-processing module URLs were checked. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
 
 
 ## Upload to GitHub

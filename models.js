@@ -13,6 +13,58 @@ export function mk(geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, cast =
 const std = (color, o = {}) =>
   new THREE.MeshStandardMaterial({ roughness: 0.8, flatShading: true, ...o, color });
 
+const surfaceMapCache = new Map();
+function surfaceMaps(surface) {
+  if (surfaceMapCache.has(surface)) return surfaceMapCache.get(surface);
+  const canvas = Object.assign(document.createElement('canvas'), { width: 1024, height: 1024 });
+  const context = canvas.getContext('2d');
+  const seed = [...surface].reduce((value, char) => value + char.charCodeAt(0), 0);
+  const rand = seeded(seed);
+  context.fillStyle = '#f1f1f1';
+  context.fillRect(0, 0, 1024, 1024);
+
+  if (surface === 'fabric') {
+    for (let p = 0; p < 1024; p += 5) {
+      context.strokeStyle = p % 10 ? 'rgba(25,25,25,.045)' : 'rgba(255,255,255,.32)';
+      context.lineWidth = 1;
+      context.beginPath(); context.moveTo(p, 0); context.lineTo(p, 1024); context.stroke();
+      context.beginPath(); context.moveTo(0, p); context.lineTo(1024, p); context.stroke();
+    }
+  } else {
+    const strokes = surface === 'metal' ? 1400 : 700;
+    for (let i = 0; i < strokes; i++) {
+      const x = rand() * 512, y = rand() * 512;
+      const light = rand() > 0.5;
+      context.strokeStyle = light ? 'rgba(255,255,255,.22)' : 'rgba(20,20,20,.14)';
+      context.lineWidth = surface === 'metal' ? 0.5 + rand() * 1.1 : 0.5 + rand() * 2;
+      context.beginPath();
+      context.moveTo(x, y);
+      context.lineTo(x + (surface === 'metal' ? 2 + rand() * 28 : 1 + rand() * 5), y + (surface === 'metal' ? 0 : 1 + rand() * 5));
+      context.stroke();
+    }
+  }
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(2, 2);
+  map.anisotropy = 8;
+  const bumpMap = map.clone();
+  bumpMap.colorSpace = THREE.NoColorSpace;
+  bumpMap.needsUpdate = true;
+  const maps = { map, bumpMap };
+  surfaceMapCache.set(surface, maps);
+  return maps;
+}
+
+function textured(color, surface, options = {}) {
+  return std(color, {
+    ...surfaceMaps(surface),
+    bumpScale: surface === 'metal' ? 0.008 : 0.018,
+    ...options
+  });
+}
+
 /* ------------------------------------------------------------------ CASINO + ROUND PEDESTAL TABLE
    The environment is constructed once and is deliberately not animated.
    The table is a fixed, round, dark-wood veneer pedestal table. */
@@ -61,15 +113,41 @@ function addBox(parent, w, h, d, mat, x, y, z, rx=0, ry=0, rz=0) {
   parent.add(m); return m;
 }
 
+function beveledBox(w, h, d, bevel = 0.025) {
+  const r = Math.min(bevel, w * 0.2, h * 0.2, d * 0.2);
+  const halfW = w / 2 - r, halfH = h / 2 - r;
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfW + r, -halfH);
+  shape.lineTo(halfW - r, -halfH);
+  shape.quadraticCurveTo(halfW, -halfH, halfW, -halfH + r);
+  shape.lineTo(halfW, halfH - r);
+  shape.quadraticCurveTo(halfW, halfH, halfW - r, halfH);
+  shape.lineTo(-halfW + r, halfH);
+  shape.quadraticCurveTo(-halfW, halfH, -halfW, halfH - r);
+  shape.lineTo(-halfW, -halfH + r);
+  shape.quadraticCurveTo(-halfW, -halfH, -halfW + r, -halfH);
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: d - 2 * r, bevelEnabled: true, bevelSegments: 1,
+    bevelSize: r, bevelThickness: r, curveSegments: 2
+  });
+  geometry.translate(0, 0, -d / 2 + r);
+  return geometry;
+}
+
 export function createEnvironment(scene) {
   const woodTex = makeVeneerTexture();
-  const wood = new THREE.MeshStandardMaterial({ map: woodTex, roughness: .62, metalness: .28 });
-  const darkWood = std(0x151619, { roughness: .68, metalness: .18 });
-  const blackMetal = std(0x090a0c, { roughness: .38, metalness: .82 });
-  const brass = std(0xaaa89f, { roughness: .38, metalness: .72 });
-  const wall = std(0x17181b, { roughness: .92 });
-  const velvet = std(0x33090d, { roughness: .94 });
-  const floorMat = std(0x111216, { roughness: .34, metalness: .22 });
+  const woodBump = woodTex.clone();
+  woodBump.colorSpace = THREE.NoColorSpace;
+  woodBump.needsUpdate = true;
+  const wood = new THREE.MeshStandardMaterial({
+    map: woodTex, bumpMap: woodBump, bumpScale: 0.035, roughness: .58, metalness: .02
+  });
+  const darkWood = textured(0x151619, 'wood', { roughness: .62, metalness: .02 });
+  const blackMetal = textured(0x090a0c, 'metal', { roughness: .38, metalness: .82 });
+  const brass = textured(0xaaa89f, 'metal', { roughness: .38, metalness: .72 });
+  const wall = textured(0x17181b, 'concrete', { roughness: .92 });
+  const velvet = textured(0x33090d, 'fabric', { roughness: .94 });
+  const floorMat = textured(0x111216, 'concrete', { roughness: .48, metalness: .08 });
 
   // Casino floor, room shell and ceiling. The camera remains inside the room.
   scene.add(mk(new THREE.PlaneGeometry(24,24), floorMat, 0,-1.43,-1.0, -Math.PI/2,0,0, false));
@@ -88,14 +166,14 @@ export function createEnvironment(scene) {
       mk(new THREE.BoxGeometry(.28,.42,.08), new THREE.MeshBasicMaterial({color:0xffd79a}),0,-.38,.23,false)
     );
     scene.add(sconce);
-    const sconceLight = new THREE.PointLight(0xffbc67, 38, 5.5, 1.8);
+    const sconceLight = new THREE.PointLight(0xffbc67, 14, 5.5, 1.8);
     sconceLight.position.set(x,3.9,-8.55);
     sconceLight.castShadow = x === -3.1 || x === 3.1;
     scene.add(sconceLight);
   }
-  const greenBack = new THREE.PointLight(0x91b79d, 22, 9, 1.8);
+  const greenBack = new THREE.PointLight(0x91b79d, 12, 9, 1.8);
   greenBack.position.set(-7.5,2.7,-7.4);
-  const redBack = new THREE.PointLight(0x8f1721, 26, 9, 1.8);
+  const redBack = new THREE.PointLight(0x8f1721, 15, 9, 1.8);
   redBack.position.set(7.5,2.7,-7.4);
   scene.add(greenBack, redBack);
 
@@ -209,11 +287,11 @@ export function createEnvironment(scene) {
       mk(new THREE.TorusGeometry(.28,.035,6,24), brass,0,-.08,0),
       mk(new THREE.SphereGeometry(.12,12,10), new THREE.MeshBasicMaterial({color:0xe0c18a}),0,-.08,0)
     ); scene.add(fixture);
-    const light=new THREE.PointLight(0xd8c39b, 34, 8, 1.8);
+    const light=new THREE.PointLight(0xd8c39b, 16, 8, 1.8);
     light.position.set(x,y-.18,z); light.castShadow = i===1 || i===2; scene.add(light);
   }
   // A low, warm central pool of light keeps the tabletop readable.
-  const tablePool = new THREE.SpotLight(0xe1c99e, 95, 12, Math.PI/3.2, .48, 1.2);
+  const tablePool = new THREE.SpotLight(0xe1c99e, 65, 12, Math.PI/3.2, .48, 1.2);
   tablePool.position.set(0,5.35,.4); tablePool.target.position.set(0,.05,-.25);
   tablePool.castShadow=true; scene.add(tablePool,tablePool.target);
 
@@ -257,9 +335,9 @@ export function createGun(scene) {
   body.position.z = -0.22;
   root.add(body);
 
-  const dark  = std(0x101116, { roughness: 0.48, metalness: 0.78 });
-  const steel = std(0x85878a, { roughness: 0.28, metalness: 0.92 });
-  const grip  = std(0x26090c, { roughness: 0.86, metalness: 0.08 });
+  const dark  = textured(0x101116, 'metal', { roughness: 0.48, metalness: 0.78 });
+  const steel = textured(0x85878a, 'metal', { roughness: 0.28, metalness: 0.92 });
+  const grip  = textured(0x26090c, 'leather', { roughness: 0.86, metalness: 0.08 });
   const bore  = new THREE.MeshBasicMaterial({ color: 0x020202 });
   const X = Math.PI / 2; // lay cylinders along Z
 
@@ -335,164 +413,170 @@ export function createGun(scene) {
 }
 
 
-/* ------------------------------------------------------------------ CHESS-CLOCK MACHINE
-   Sits at the front of the table facing the camera. Two dials + decorative
-   paddles on top, and a raised back panel with one needle gauge per player:
-   needle sweeps right (full) -> left (dead) as lives count down.            */
+/* ------------------------------------------------------------------ PLAYER LIFE MONITOR
+   A raised row of individual gauges with three status lamps per player. */
 export function createMachine(scene, n = 3) {
   const W = Math.max(1.3, n * 0.4 + 0.2);
+  const spacing = (W - 0.2) / n;
+  const radius = Math.min(0.155, spacing * 0.39);
   const grp = new THREE.Group();
   grp.position.set(0, 0.14, 1.85);
 
-  const metal  = std(0x111217, { roughness: 0.62, metalness: 0.72 });
-  const plate  = std(0x303238, { roughness: 0.48, metalness: 0.58 });
-  const steel  = std(0x686b70, { roughness: 0.38, metalness: 0.78 });
-  const accent = std(0x790d17, { roughness: 0.52, metalness: 0.38 });
-  const faceM  = std(0xc9c5ba, { roughness: 0.82 });
-  const inkM   = new THREE.MeshBasicMaterial({ color: 0x0b0b0c });
-  const pipM   = new THREE.MeshBasicMaterial({ color: 0xded8ca });
-  const needleM = new THREE.MeshBasicMaterial({ color: 0xb20d18 });
-  const screenMat = new THREE.MeshBasicMaterial({ color: 0x3b8c5a }); // status lamp
+  const metal = textured(0x17191d, 'metal', { roughness: 0.48, metalness: 0.78 });
+  const plate = textured(0x393b3e, 'metal', { roughness: 0.4, metalness: 0.72 });
+  const steel = textured(0x85837c, 'metal', { roughness: 0.3, metalness: 0.82 });
+  const accent = textured(0x401015, 'leather', { roughness: 0.82, metalness: 0.04 });
+  const dialFace = std(0xbab8ae, { roughness: 0.7 });
+  const dialInset = std(0x292a2d, { roughness: 0.52, metalness: 0.12 });
+  const ink = new THREE.MeshBasicMaterial({ color: 0x171719 });
+  const needleMat = new THREE.MeshBasicMaterial({ color: 0x9d1c26 });
+  const screenMat = new THREE.MeshBasicMaterial({ color: 0x3b8c5a });
   const X = Math.PI / 2;
 
   grp.add(
-    mk(new THREE.BoxGeometry(W, 0.36, 0.55), metal, 0, 0.18, 0.05),
-    mk(new THREE.BoxGeometry(W + 0.12, 0.07, 0.62), metal, 0, 0.01, 0.05),
-    mk(new THREE.BoxGeometry(W + 0.04, 0.04, 0.58), plate, 0, 0.38, 0.05),
-    mk(new THREE.BoxGeometry(W + 0.08, 0.025, 0.61), accent, 0, 0.005, 0.05)
+    mk(beveledBox(W + 0.16, 0.42, 0.78, 0.055), metal, 0, 0.23, 0.02),
+    mk(beveledBox(W + 0.2, 0.055, 0.82, 0.022), steel, 0, 0.025, 0.02),
+    mk(beveledBox(W - 0.12, 0.56, 0.14, 0.025), metal, 0, 0.68, -0.26),
+    mk(beveledBox(W - 0.2, 0.48, 0.018, 0.012), plate, 0, 0.68, -0.181),
+    mk(beveledBox(W + 0.1, 0.045, 0.04, 0.012), accent, 0, 0.1, 0.424)
   );
 
-  // Reinforced front edge and visible case fasteners.
-  grp.add(
-    mk(new THREE.BoxGeometry(W - 0.12, 0.025, 0.025), steel, 0, 0.07, 0.34),
-    mk(new THREE.BoxGeometry(W - 0.12, 0.018, 0.018), accent, 0, 0.045, 0.35)
-  );
-  for (const x of [-W / 2 + 0.1, W / 2 - 0.1]) {
-    grp.add(
-      mk(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 8), steel, x, 0.16, 0.343, X, 0, 0, false),
-      mk(new THREE.BoxGeometry(0.018, 0.004, 0.004), inkM, x, 0.16, 0.354, 0, 0, Math.PI / 4, false)
-    );
+  // Four exposed fasteners hold the raised instrument panel to the housing.
+  for (const x of [-W / 2 + 0.12, W / 2 - 0.12]) {
+    for (const y of [0.46, 0.9]) {
+      grp.add(
+        mk(new THREE.CylinderGeometry(0.022, 0.022, 0.018, 10), steel, x, y, -0.17, X, 0, 0, false),
+        mk(new THREE.BoxGeometry(0.02, 0.003, 0.003), ink, x, y, -0.157, 0, 0, Math.PI / 4, false)
+      );
+    }
   }
 
-  // Two instrument dials with raised bezels and ticks.
-  const dx = W / 2 - 0.32;
-  [-1, 1].forEach(sx => {
-    const cx = sx * dx, cy = 0.2;
-    grp.add(
-      mk(new THREE.TorusGeometry(0.195, 0.018, 6, 24), steel, cx, cy, 0.356, 0, 0, 0, false),
-      mk(new THREE.CylinderGeometry(0.19, 0.19, 0.03, 20), faceM, cx, cy, 0.335, X, 0, 0, false),
-      mk(new THREE.CylinderGeometry(0.02, 0.02, 0.04, 8), inkM, cx, cy, 0.35, X, 0, 0, false),
-      mk(new THREE.BoxGeometry(0.012, 0.1, 0.01), inkM, cx, cy + 0.05, 0.355, 0, 0, sx * 0.6, false)
-    );
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      grp.add(mk(new THREE.BoxGeometry(0.012, 0.035, 0.01), inkM,
-        cx + Math.sin(a) * 0.15, cy + Math.cos(a) * 0.15, 0.352, 0, 0, -a, false));
-    }
-  });
-
-  // Status lamp between the faces (main.js recolours screenMat).
-  grp.add(
-    mk(new THREE.BoxGeometry(0.28, 0.12, 0.025), steel, 0, 0.2, 0.34, 0, 0, 0, false),
-    mk(new THREE.BoxGeometry(0.2, 0.07, 0.012), screenMat, 0, 0.2, 0.36, 0, 0, 0, false),
-    mk(new THREE.BoxGeometry(0.035, 0.012, 0.012), accent, -0.105, 0.2, 0.36, 0, 0, 0, false),
-    mk(new THREE.BoxGeometry(0.035, 0.012, 0.012), accent, 0.105, 0.2, 0.36, 0, 0, 0, false)
-  );
-
-  // decorative paddles
-  const makePaddle = (sx) => {
-    const g = new THREE.Group();
-    g.position.set(sx * dx, 0.4, -0.12);
-    g.add(
-      mk(new THREE.CylinderGeometry(0.035, 0.035, 0.12, 8), steel, 0, 0.03, 0.05, X, 0, 0),
-      mk(new THREE.BoxGeometry(0.4, 0.07, 0.3), plate, 0, 0.035, 0.15),
-      mk(new THREE.BoxGeometry(0.22, 0.025, 0.06), accent, 0, 0.076, 0.23)
-    );
-    return g;
-  };
-  const lever = makePaddle(1);
-  const lever2 = makePaddle(-1);
-  const knob = mk(new THREE.SphereGeometry(0.05, 8, 8), std(0x7a2a2e, { roughness: 0.5 }), 0, 0.1, 0.15);
-  lever.add(knob);
-  grp.add(lever, lever2);
-
-  // Raised back panel, one needle gauge per player.
-  grp.add(
-    mk(new THREE.BoxGeometry(W + 0.08, 0.56, 0.1), metal, 0, 0.63, -0.26),
-    mk(new THREE.BoxGeometry(W - 0.08, 0.025, 0.018), accent, 0, 0.36, -0.198),
-    mk(new THREE.BoxGeometry(W - 0.08, 0.025, 0.018), steel, 0, 0.9, -0.198)
-  );
   const needles = [];
+  const lifeSegments = [];
+  const lifeLevels = Array(n).fill(null);
   for (let i = 0; i < n; i++) {
-    const x = (i - (n - 1) / 2) * 0.4, y = 0.64;
+    const cx = (i - (n - 1) / 2) * spacing;
+    const cy = 0.69;
+    const faceZ = -0.125;
     grp.add(
-      mk(new THREE.CylinderGeometry(0.17, 0.17, 0.04, 20), plate, x, y, -0.21, X, 0, 0, false),
-      mk(new THREE.CylinderGeometry(0.145, 0.145, 0.02, 20), faceM, x, y, -0.19, X, 0, 0, false),
-      mk(new THREE.TorusGeometry(0.16, 0.012, 6, 20), steel, x, y, -0.168, 0, 0, 0, false)
+      mk(new THREE.CylinderGeometry(radius + 0.025, radius + 0.025, 0.045, 24), metal, cx, cy, faceZ, X, 0, 0),
+      mk(new THREE.TorusGeometry(radius + 0.012, 0.014, 8, 24), steel, cx, cy, faceZ + 0.026),
+      mk(new THREE.CylinderGeometry(radius, radius, 0.018, 24), dialFace, cx, cy, faceZ + 0.028, X, 0, 0),
+      mk(new THREE.CylinderGeometry(radius * 0.81, radius * 0.81, 0.008, 24), dialInset, cx, cy, faceZ + 0.04, X, 0, 0, false)
     );
-    for (let k = 0; k < 5; k++) {
-      const a = -0.9 + k * 0.45;
-      grp.add(mk(new THREE.BoxGeometry(0.01, 0.025, 0.008), inkM,
-        x - Math.sin(a) * 0.115, y + Math.cos(a) * 0.115, -0.178, 0, 0, a, false));
+
+    for (let tick = 0; tick <= 12; tick++) {
+      const angle = -0.9 + tick * 0.15;
+      const major = tick % 4 === 0;
+      const tickLength = major ? 0.026 : 0.014;
+      grp.add(mk(
+        new THREE.BoxGeometry(major ? 0.008 : 0.005, tickLength, 0.004),
+        ink,
+        cx + Math.sin(angle) * radius * 0.68,
+        cy + Math.cos(angle) * radius * 0.68,
+        faceZ + 0.048,
+        0, 0, -angle,
+        false
+      ));
     }
-    for (let p = 0; p <= i; p++) {   // player-number pips
-      grp.add(mk(new THREE.BoxGeometry(0.018, 0.018, 0.01), pipM,
-        x + (p - i / 2) * 0.035, 0.85, -0.215, 0, 0, 0, false));
-    }
+
     const needle = new THREE.Group();
-    needle.position.set(x, y, -0.172);
+    needle.position.set(cx, cy, faceZ + 0.055);
     needle.rotation.z = -0.9;
     needle.add(
-      mk(new THREE.BoxGeometry(0.014, 0.12, 0.008), needleM, 0, 0.055, 0, 0, 0, 0, false),
-      mk(new THREE.CylinderGeometry(0.02, 0.02, 0.01, 8), inkM, 0, 0, 0, X, 0, 0, false)
+      mk(new THREE.BoxGeometry(0.008, radius * 1.05, 0.006), needleMat, 0, radius * 0.42, 0, 0, 0, 0, false),
+      mk(new THREE.CylinderGeometry(0.018, 0.018, 0.012, 10), steel, 0, 0, 0.004, X, 0, 0, false)
     );
     grp.add(needle);
     needles.push(needle);
+
+    const segments = [];
+    for (let segment = 0; segment < 3; segment++) {
+      const material = new THREE.MeshBasicMaterial({ color: 0x343538 });
+      const x = cx + (segment - 1) * 0.055;
+      grp.add(
+        mk(new THREE.CylinderGeometry(0.016, 0.016, 0.012, 10), steel, x, 0.445, faceZ + 0.012, X, 0, 0),
+        mk(new THREE.SphereGeometry(0.012, 8, 6), material, x, 0.445, faceZ + 0.027, 0, 0, 0, false)
+      );
+      segments.push(material);
+    }
+    lifeSegments.push(segments);
   }
 
-  // small light so the gauges stay readable in the dark room
-  const lamp = new THREE.PointLight(0xcfc8b8, 4, 4);
-  lamp.position.set(0, 1.1, 0.8);
-  grp.add(lamp);
+  // A single status window identifies the machine's current state.
+  grp.add(
+    mk(beveledBox(0.42, 0.14, 0.045, 0.018), steel, 0, 0.22, 0.425),
+    mk(beveledBox(0.32, 0.065, 0.012, 0.01), dialInset, 0, 0.22, 0.454),
+    mk(beveledBox(0.22, 0.035, 0.008, 0.006), screenMat, 0, 0.22, 0.464, 0, 0, 0, false)
+  );
+  const statusLamp = new THREE.PointLight(0xcfc8b8, 2.5, 1.8);
+  statusLamp.position.set(0, 0.26, 0.55);
+  grp.add(statusLamp);
 
   scene.add(grp);
-  return { root: grp, lever, lever2, knob, screenMat, needles };
+  return { root: grp, screenMat, needles, lifeSegments, lifeLevels };
 }
 
-/* ------------------------------------------------------------------ SHADOW PEOPLE + CHAIRS
-   Trench-coated silhouettes remain faceless; casino fixtures reveal their form. */
+/* ------------------------------------------------------------------ SEATED PLAYERS + CHAIRS
+   Distinct, faceted people keep natural anatomy and readable expressions. */
 function capsuleBetween(a,b,radius,material,parent) {
   const va=new THREE.Vector3(...a), vb=new THREE.Vector3(...b), delta=vb.clone().sub(va);
-  const mesh=mk(new THREE.CapsuleGeometry(radius,Math.max(.01,delta.length()-radius*2),4,8),material);
+  const mesh=mk(new THREE.CapsuleGeometry(radius,Math.max(.01,delta.length()-radius*2),5,10),material);
   mesh.position.copy(va.add(vb).multiplyScalar(.5));
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
   parent.add(mesh); return mesh;
 }
 
-export function createMafiaPlayer(scene, x, y, z, rotY) {
+function createGlovedHand(material, mirror = 1) {
+  const hand = new THREE.Group();
+  const palm = mk(new THREE.SphereGeometry(.09,12,10),material,0,0,0);
+  palm.scale.set(.78,1.08,1.22);
+  hand.add(palm);
+  for (let i = 0; i < 4; i++) {
+    const x = mirror * (i - 1.5) * .036;
+    capsuleBetween([x,-.01,.045],[x,-.025,.16 - Math.abs(i - 1.5) * .018],.018,material,hand);
+  }
+  capsuleBetween([mirror * -.07,0,.015],[mirror * -.12,-.015,.10],.024,material,hand);
+  return hand;
+}
+
+export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   const root = new THREE.Group();
   root.position.set(x,y,z); root.rotation.y=rotY;
+  root.scale.y = [0.97,1.03,1,0.96,1.04,1][Math.abs(Math.trunc(variant)) % 6];
 
-  const silhouette = std(0x111216,{roughness:.96,metalness:.04,emissive:0x0a090a,emissiveIntensity:0});
-  const silhouetteDeep = std(0x050507,{roughness:1,metalness:0});
-  const chairWood = std(0x17181b,{roughness:.72,metalness:.15});
-  const chairLeather = std(0x25080b,{roughness:.9});
-  const chairIron = std(0x090a0c,{roughness:.48,metalness:.78});
-  const brass = std(0x77766f,{roughness:.42,metalness:.72});
-  const skinShadow = std(0x8e7868,{roughness:.78,metalness:.02});
-  const hair = std(0x09090a,{roughness:.92});
-  const shirt = std(0xd0cabd,{roughness:.72,metalness:.03});
+  const looks = [
+    { skin:0x89837a, coat:0x292b30, shirt:0xc2bfb5, hair:0x111113, tie:0x6e1017 },
+    { skin:0x756d64, coat:0x333237, shirt:0xb8b7b1, hair:0x1a1513, tie:0x282a31 },
+    { skin:0xa1988a, coat:0x24282d, shirt:0xc9c5b9, hair:0x171719, tie:0x4c171b },
+    { skin:0x7d7e7b, coat:0x302d2a, shirt:0xbab9b5, hair:0x272321, tie:0x5d5548 },
+    { skin:0x89796e, coat:0x242428, shirt:0xc1bdb5, hair:0x111214, tie:0x43151b },
+    { skin:0x9b9082, coat:0x343238, shirt:0xc7c3ba, hair:0x302923, tie:0x25282c }
+  ];
+  const look = looks[Math.abs(Math.trunc(variant)) % looks.length];
+  const silhouette = textured(look.coat,'fabric',{roughness:.96,metalness:.02,emissive:0x101116,emissiveIntensity:0});
+  const silhouetteDeep = textured(0x111216,'leather',{roughness:.88,metalness:0});
+  const chairWood = textured(0x17181b,'wood',{roughness:.72,metalness:.02});
+  const chairLeather = textured(0x25080b,'leather',{roughness:.9});
+  const chairIron = textured(0x090a0c,'metal',{roughness:.48,metalness:.78});
+  const brass = textured(0x77766f,'metal',{roughness:.42,metalness:.72});
+  const skinShadow = textured(look.skin,'skin',{roughness:.84,metalness:0.01,bumpScale:.01});
+  const hair = textured(look.hair,'leather',{roughness:.92});
+  const shirt = textured(look.shirt,'fabric',{roughness:.82,metalness:.01});
+  const coat = silhouette;
+  const trousers = textured(0x202126,'fabric',{roughness:.92,metalness:.01});
+  const shoes = textured(0x111114,'leather',{roughness:.66,metalness:.04});
 
   // High-backed casino chair with a shaped upholstered back, seat and visible frame.
   const chair=new THREE.Group(); chair.position.set(0,-.45,-.18);
   chair.add(
     mk(new THREE.BoxGeometry(.96,.13,.9),chairWood,0,0,0),
-    mk(new THREE.BoxGeometry(.84,.09,.78),chairLeather,0,.075,.015),
+    mk(beveledBox(.84,.09,.78,.035),chairLeather,0,.075,.015),
     mk(new THREE.BoxGeometry(.11,1.55,.12),chairWood,-.4,.77,-.38),
     mk(new THREE.BoxGeometry(.11,1.55,.12),chairWood,.4,.77,-.38),
     mk(new THREE.BoxGeometry(.88,.19,.12),chairWood,0,1.48,-.38),
     mk(new THREE.BoxGeometry(.78,.1,.1),brass,0,1.12,-.32),
-    mk(new THREE.BoxGeometry(.72,1.15,.08),chairLeather,0,.77,-.39),
+    mk(beveledBox(.72,1.15,.08,.035),chairLeather,0,.77,-.39),
     mk(new THREE.BoxGeometry(.08,1.12,.08),chairIron,-.39,-.56,-.35),
     mk(new THREE.BoxGeometry(.08,1.12,.08),chairIron,.39,-.56,-.35),
     mk(new THREE.BoxGeometry(.08,1.12,.08),chairIron,-.39,-.56,.35),
@@ -502,8 +586,8 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
     // Upholstered arm pads and carved wooden rails make the chair read as furniture.
     mk(new THREE.BoxGeometry(.16,.13,.78),chairWood,-.49,.48,.02),
     mk(new THREE.BoxGeometry(.16,.13,.78),chairWood,.49,.48,.02),
-    mk(new THREE.BoxGeometry(.19,.075,.72),chairLeather,-.49,.555,.02),
-    mk(new THREE.BoxGeometry(.19,.075,.72),chairLeather,.49,.555,.02),
+    mk(beveledBox(.19,.075,.72,.025),chairLeather,-.49,.555,.02),
+    mk(beveledBox(.19,.075,.72,.025),chairLeather,.49,.555,.02),
     mk(new THREE.BoxGeometry(.045,.78,.09),brass,-.49,.02,.02),
     mk(new THREE.BoxGeometry(.045,.78,.09),brass,.49,.02,.02)
   );
@@ -516,36 +600,75 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   );
 
   // Seated torso, shoulders and neck.
-  const torsoProfile=[new THREE.Vector2(0,-1.0),new THREE.Vector2(.28,-.98),new THREE.Vector2(.32,-.75),new THREE.Vector2(.34,-.38),new THREE.Vector2(.31,-.05),new THREE.Vector2(.43,.22),new THREE.Vector2(.48,.36),new THREE.Vector2(.34,.48),new THREE.Vector2(.16,.53),new THREE.Vector2(0,.53)];
-  const torso=mk(new THREE.LatheGeometry(torsoProfile,16),silhouette,0,.67,.02);
-  const shoulders=mk(new THREE.SphereGeometry(1,16,12),silhouette,0,1.03,.02);
-  shoulders.scale.set(.48,.23,.31);
-  const neck=mk(new THREE.CylinderGeometry(.105,.13,.22,10),silhouetteDeep,0,1.28,.01);
+  const torsoProfile=[
+    new THREE.Vector2(0,-.96),new THREE.Vector2(.26,-.96),new THREE.Vector2(.30,-.78),
+    new THREE.Vector2(.29,-.45),new THREE.Vector2(.32,-.12),new THREE.Vector2(.38,.12),
+    new THREE.Vector2(.48,.23),new THREE.Vector2(.46,.31),new THREE.Vector2(.34,.45),
+    new THREE.Vector2(.16,.52),new THREE.Vector2(0,.52)
+  ];
+  const torso=mk(new THREE.LatheGeometry(torsoProfile,20),coat,0,.67,.02);
+  const shoulders=mk(new THREE.SphereGeometry(1,18,12),coat,0,1.03,.02);
+  const shoulderWidth = variant % 3 === 0 ? .46 : variant % 3 === 1 ? .5 : .48;
+  shoulders.scale.set(shoulderWidth,.23,.31);
+  const neck=mk(new THREE.CylinderGeometry(.105,.13,.22,12),skinShadow,0,1.28,.01);
   const head=new THREE.Group(); head.position.set(0,1.54,.02);
-  const headShape=mk(new THREE.SphereGeometry(.245,16,12),silhouette,0,0,0);
-  headShape.scale.set(.88,1.12,.94); head.add(headShape);
+  const headShape=mk(new THREE.SphereGeometry(.225,16,12),skinShadow,0,.025,0);
+  headShape.scale.set(.84,1.08,.92); head.add(headShape);
+  const jaw=mk(new THREE.SphereGeometry(.16,14,10),skinShadow,0,-.09,.025);
+  jaw.scale.set(.92,.78,.9); head.add(jaw);
 
   // 1930s gangster read: fedora, visible skin planes, black hair, brow and moustache.
   const fedora = new THREE.Group();
   fedora.position.set(0,.22,.01);
+  const hatScale = variant % 3 === 1 ? 0.94 : variant % 3 === 2 ? 1.05 : 1;
+  fedora.scale.set(hatScale, variant % 2 ? .94 : 1, hatScale);
   fedora.add(
     mk(new THREE.CylinderGeometry(.255,.255,.095,20),hair,0,.04,0),
     mk(new THREE.CylinderGeometry(.31,.31,.025,24),hair,0,-.015,.04),
+    mk(new THREE.CylinderGeometry(.18,.23,.24,16),hair,0,.15,0),
     mk(new THREE.TorusGeometry(.265,.018,6,24),brass,0,.018,.02,0,0,0,false)
   );
   head.add(fedora);
-  const faceSide = std(0x2d2b2a,{roughness:.82});
+  if (variant % 4 === 1) {
+    fedora.visible = false;
+    const hairCap = mk(new THREE.SphereGeometry(.21,14,10),hair,0,.17,-.005);
+    hairCap.scale.set(1,.48,.96);
+    head.add(hairCap);
+  }
+  const faceSide = textured(0x68655f,'skin',{roughness:.88,metalness:.01,bumpScale:.01});
+  const eyeWhite = std(0xa6a39c,{roughness:.42});
+  const iris = std(variant % 2 ? 0x48433d : 0x343b40,{roughness:.38});
+  const eyeDark = std(0x18191b,{roughness:.32});
+  const eyes = [];
+  const gaze = variant % 3 === 0 ? -.006 : variant % 3 === 1 ? .004 : 0;
+  const moustache = variant % 3 !== 1;
   head.add(
-    mk(new THREE.SphereGeometry(.024,8,6),skinShadow,-.075,.02,.227),
-    mk(new THREE.SphereGeometry(.024,8,6),skinShadow,.075,.02,.227),
-    mk(new THREE.BoxGeometry(.13,.018,.018),hair,-.075,.105,.225,0,0,-.08),
-    mk(new THREE.BoxGeometry(.13,.018,.018),hair,.075,.105,.225,0,0,.08),
-    mk(new THREE.ConeGeometry(.035,.09,8),faceSide,0,-.025,.235,0,0,0,false),
-    mk(new THREE.BoxGeometry(.105,.018,.018),hair,0,-.10,.225,0,0,0)
+    mk(new THREE.SphereGeometry(.04,10,8),skinShadow,-.205,-.015,0),
+    mk(new THREE.SphereGeometry(.04,10,8),skinShadow,.205,-.015,0)
+  );
+  for (const x of [-.075,.075]) {
+    head.add(mk(new THREE.SphereGeometry(.031,10,8),skinShadow,x,.025,.188));
+    const eye = new THREE.Group();
+    eye.position.set(x,.025,.198);
+    eye.add(
+      mk(new THREE.SphereGeometry(.019,10,8),eyeWhite,0,0,.013),
+      mk(new THREE.SphereGeometry(.009,8,6),iris,gaze,0,.029),
+      mk(new THREE.SphereGeometry(.0045,8,6),eyeDark,gaze,0,.036)
+    );
+    eyes.push(eye);
+    head.add(eye);
+  }
+  head.add(
+    mk(new THREE.BoxGeometry(.12,.018,.018),hair,-.075,.075,.198,0,0,-.12),
+    mk(new THREE.BoxGeometry(.12,.018,.018),hair,.075,.075,.198,0,0,.12),
+    mk(new THREE.ConeGeometry(.03,.09,6),faceSide,0,-.025,.195,Math.PI/2,0,0),
+    ...(moustache ? [
+      mk(new THREE.BoxGeometry(.065,.018,.018),hair,-.032,-.065,.205,0,0,-.14),
+      mk(new THREE.BoxGeometry(.065,.018,.018),hair,.032,-.065,.205,0,0,.14)
+    ] : [mk(new THREE.BoxGeometry(.07,.009,.012),faceSide,0,-.105,.194)])
   );
 
   const coatDetails = new THREE.Group();
-  const coat = std(0x19191c,{roughness:.94,metalness:.02,side:THREE.DoubleSide});
   const lapel = std(0x29272a,{roughness:.9,metalness:.02,side:THREE.DoubleSide});
   const buttons = std(0x70685c,{roughness:.58,metalness:.5});
   const addCoatPanel = (points, material, z) => {
@@ -563,7 +686,7 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
     mk(new THREE.BoxGeometry(.58,.045,.025),lapel,0,.53,.355,0,0,0,false),
     mk(new THREE.BoxGeometry(.065,.065,.025),buttons,0,.53,.375,0,0,0,false),
     mk(new THREE.BoxGeometry(.11,.28,.025),shirt,0,.78,.365,0,0,0,false),
-    mk(new THREE.BoxGeometry(.14,.06,.03),std(0x6e1017,{roughness:.9}),0,.70,.385,0,0,0,false)
+    mk(new THREE.BoxGeometry(.14,.06,.03),textured(look.tie,'fabric',{roughness:.9}),0,.70,.385,0,0,0,false)
   );
   // Long coat tails and lapel piping make the silhouette read as a trench coat.
   coatDetails.add(
@@ -582,14 +705,27 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   const arm=new THREE.Group(); arm.position.set(-.43,1.02,.12);
   capsuleBetween([0,0,0],[-.13,-.42,.22],.115,silhouette,arm);
   capsuleBetween([-.13,-.42,.22],[-.08,-.84,.66],.09,silhouette,arm);
-  const hand=mk(new THREE.SphereGeometry(.105,10,8),silhouetteDeep,-.08,-.91,.72); hand.scale.set(.8,1.15,1.25); arm.add(hand);
+  const hand=createGlovedHand(silhouetteDeep); hand.position.set(-.08,-.91,.72); arm.add(hand);
   const restingArm=new THREE.Group(); restingArm.position.set(.43,1.02,.12);
   capsuleBetween([0,0,0],[.13,-.42,.2],.115,silhouette,restingArm);
   capsuleBetween([.13,-.42,.2],[.1,-.82,.62],.09,silhouette,restingArm);
-  const restingHand=mk(new THREE.SphereGeometry(.1,10,8),silhouetteDeep,.1,-.89,.68); restingHand.scale.set(.85,1.1,1.2); restingArm.add(restingHand);
+  const restingHand=createGlovedHand(silhouetteDeep,-1); restingHand.position.set(.1,-.89,.68); restingArm.add(restingHand);
 
   const body = new THREE.Group();
   const slumpPivotY = 0.12;
+  const legs = new THREE.Group();
+  legs.position.y = -slumpPivotY;
+  for (const side of [-1, 1]) {
+    const hip = [side * .18, .12, -.04];
+    const knee = [side * .19, -.22, .39];
+    const ankle = [side * .19, -.56, .42];
+    capsuleBetween(hip,knee,.14,trousers,legs);
+    capsuleBetween(knee,ankle,.095,trousers,legs);
+    const boot = mk(new THREE.SphereGeometry(1,14,10),shoes,side * .19,-.59,.53);
+    boot.scale.set(.12,.075,.22);
+    legs.add(boot);
+  }
+  body.add(legs);
   body.position.y = slumpPivotY;
   for (const part of [torso,shoulders,neck,head,arm,restingArm]) {
     part.position.y -= slumpPivotY;
@@ -600,8 +736,9 @@ export function createMafiaPlayer(scene, x, y, z, rotY) {
   root.add(chair,body);
   scene.add(root);
   return {
-    root,body,head,hand,arm,
-    firstPersonParts:[torso,shoulders,neck,coatDetails],
+    root,body,head,hand,arm,eyes,
+    nextBlinkAt:performance.now()+1200+Math.random()*4000,blinkUntil:0,
+    firstPersonParts:[torso,shoulders,neck,coatDetails,legs],
     lives:3,isDead:false,glow:silhouette
   };
 }

@@ -1,4 +1,9 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mk, createEnvironment, createGun, createMachine, createMafiaPlayer } from './models.js';
 
 /* ================================================================ config */
@@ -18,6 +23,7 @@ let S = { phase: 'PARTIES', players: [], active: -1, target: null, neighbors: nu
 let stateAt = performance.now();
 let hoverLocal = null, hoverRemote = null;
 let parties = [], lobbyError = '';
+let dreamPulse = 0;
 
 const params = new URLSearchParams(location.search);
 const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> create a test party, add bots, start
@@ -60,7 +66,7 @@ ws.onmessage = (e) => {
 /* ================================================================ scene */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x09090b);
-scene.fog = new THREE.FogExp2(0x09090b, 0.032);
+scene.fog = new THREE.FogExp2(0x111116, 0.024);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 const baseCamPos = BASE_CAM.clone();
@@ -74,6 +80,66 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.22;
 document.body.appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.48,
+  0.55,
+  0.82
+));
+const dreamPass = new ShaderPass({
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uIntensity: { value: 0.4 },
+    uPulse: { value: 0 },
+    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uIntensity;
+    uniform float uPulse;
+    uniform vec2 uResolution;
+    varying vec2 vUv;
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7)) + uTime * 19.0) * 43758.5453);
+    }
+
+    void main() {
+      vec2 centered = vUv - 0.5;
+      float radius = length(centered);
+      float breathing = sin(uTime * 0.34 + radius * 9.0) * 0.0025 * uIntensity;
+      float ripple = sin(vUv.y * 18.0 + vUv.x * 7.0 + uTime * 0.62);
+      vec2 warpedUv = vUv + centered * breathing
+        + vec2(ripple, -ripple * 0.5) * (0.0008 * uIntensity + 0.0022 * uPulse);
+      vec2 direction = normalize(centered + vec2(0.0001));
+      float aberration = (0.0007 + 0.0013 * uIntensity + 0.005 * uPulse)
+        * smoothstep(0.0, 0.68, radius);
+      vec3 color;
+      color.r = texture2D(tDiffuse, warpedUv + direction * aberration).r;
+      color.g = texture2D(tDiffuse, warpedUv).g;
+      color.b = texture2D(tDiffuse, warpedUv - direction * aberration).b;
+      float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+      color = mix(vec3(luminance), color, 0.82);
+      float grain = hash(floor(vUv * uResolution * 0.5)) - 0.5;
+      color += grain * (0.012 + 0.012 * uIntensity);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `
+});
+composer.addPass(dreamPass);
+composer.addPass(new OutputPass());
 
 function updateResponsiveCamera() {
   const aspect = window.innerWidth / window.innerHeight;
@@ -97,23 +163,34 @@ function updateResponsiveCamera() {
   camera.position.copy(baseCamPos);
   if (viewer) camera.lookAt(GUN_X, 0.92, GUN_Z);
   else camera.lookAt(LOOK);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setPixelRatio(pixelRatio);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  dreamPass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
 }
 updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
 
-const spot = new THREE.SpotLight(0xffedc2, 115, 18, Math.PI / 4.2, 0.38, 1.15);
+const spot = new THREE.SpotLight(0xffe6c1, 178, 18, Math.PI / 5.2, 0.24, 1.15);
 spot.position.set(0.0, 5.8, 1.2);
 spot.target.position.set(0, 0.2, -0.3);
 spot.castShadow = true;
-const rim = new THREE.PointLight(0xb11822, 28, 14, 1.7);
+const rim = new THREE.PointLight(0xb11822, 48, 14, 1.7);
 rim.position.set(0, 2.7, -6.2);
-const backFill = new THREE.PointLight(0x8fa6b4, 18, 12, 1.9);
+const backFill = new THREE.PointLight(0x8fa6b4, 29, 12, 1.9);
 backFill.position.set(-5.2, 3.2, -3.8);
-const warmFill = new THREE.PointLight(0xffdca3, 22, 9, 1.7);
+const warmFill = new THREE.PointLight(0xffdca3, 12, 9, 1.7);
 warmFill.position.set(4.8, 2.4, 1.4);
-scene.add(new THREE.HemisphereLight(0x9ca9af, 0x17090a, 0.55), spot, spot.target, rim, backFill, warmFill);
+const coldRim = new THREE.SpotLight(0xa6b5d0, 105, 16, Math.PI / 6.5, 0.22, 1.2);
+coldRim.position.set(-5.2, 4.2, -3.8);
+coldRim.target.position.set(0, 0.8, 0);
+coldRim.castShadow = true;
+scene.add(
+  new THREE.HemisphereLight(0x7d8998, 0x09080b, 0.24),
+  spot, spot.target, rim, backFill, warmFill, coldRim, coldRim.target
+);
 
 createEnvironment(scene);
 const gun = createGun(scene);
@@ -153,7 +230,7 @@ function buildSeats(n) {
     const x = RING_RX * Math.sin(ang);
     const z = RING_CZ - RING_RZ * Math.cos(ang);
     const rotY = Math.atan2(GUN_X - x, GUN_Z - z);       // seat faces the gun
-    const pl = createMafiaPlayer(scene, x, 0.14, z, rotY);
+    const pl = createMafiaPlayer(scene, x, 0.14, z, rotY, i);
     pl.root.userData.idx = i;
     pl.deadAt = 0;
     players.push(pl);
@@ -525,10 +602,12 @@ function onEvent(m) {
   const nm = (i) => (S.players[i] ? S.players[i].name : '?');
   const pullTrigger = () => { tAng = 0.45; setTimeout(() => { tAng = 0; }, 140); };
   if (m.e === 'blank') {
+    dreamPulse = Math.max(dreamPulse, 0.38);
     playDryClick();
     pullTrigger(); lamp(0x3b6e6c, 1000);
     hold(m.target === m.by ? `*CLICK* — BLANK! ${nm(m.by)} GOES AGAIN` : `*CLICK* — BLANK! ${nm(m.target)} TAKES THE GUN`, 1600);
   } else if (m.e === 'shot') {
+    dreamPulse = 1;
     playGunshot();
     pullTrigger(); shake = 0.24; gunKick = 0.20; lamp(0x9e1b24, 1100);
     if (m.dead) { burst(m.target); hold(`${nm(m.target)} ELIMINATED!`, 1700); }
@@ -537,6 +616,7 @@ function onEvent(m) {
     playTone(115, .35, 'triangle', .18, 45);
     burst(m.who); hold(`${nm(m.who)} DID NOT RESPOND — REMOVED`, 2200);
   } else if (m.e === 'sudden') {
+    dreamPulse = Math.max(dreamPulse, 0.8);
     playTone(260, .55, 'sawtooth', .12, 70);
     setTimeout(() => playTone(520, .32, 'sine', .09, 330), 180);
     finalFlash = 1; shake = 0.35; hold('FINAL TWO — ALL LIVES = 1', 2400);
@@ -653,6 +733,14 @@ function animate() {
   const now = performance.now();
   const ph = S.phase;
   const spinning = ph === 'SPINNING';
+  const phaseIntensity = ph === 'SPINNING' ? 0.95
+    : ph === 'AIMING' || ph === 'RESOLVING' ? 0.82
+      : ph === 'SETTLING' ? 0.72 : 0.4;
+  dreamPass.uniforms.uTime.value = t;
+  dreamPass.uniforms.uIntensity.value +=
+    (phaseIntensity - dreamPass.uniforms.uIntensity.value) * Math.min(1, 2.8 * dt);
+  dreamPass.uniforms.uPulse.value = dreamPulse;
+  dreamPulse *= Math.pow(0.035, dt);
 
   // primer (thumb lever): pulled while spinning; hammer cocked until the shot
   const lAng = spinning ? 0.55 : 0;
@@ -671,6 +759,20 @@ function animate() {
   if (aimIndex !== null && players[aimIndex]) players[aimIndex].head.getWorldPosition(aimPoint);
 
   players.forEach((p, i) => {
+    if (!p.isDead) {
+      const idleHeadTurn = Math.sin(t * 0.38 + i * 2.1) * (i === S.active ? 0.02 : 0.045);
+      p.head.rotation.y += (idleHeadTurn - p.head.rotation.y) * 1.4 * dt;
+      p.body.scale.y = 1 + Math.sin(t * 1.1 + i * 1.7) * 0.004;
+    }
+    if (now >= p.nextBlinkAt) {
+      p.blinkUntil = now + 120;
+      p.nextBlinkAt = now + 2600 + Math.random() * 3200;
+    }
+    const blinkScale = now < p.blinkUntil ? 0.12 : 1;
+    p.eyes.forEach(eye => {
+      eye.scale.y += (blinkScale - eye.scale.y) * Math.min(1, 36 * dt);
+    });
+
     if (!p.isDead) {
       const pulling = spinning && i === S.active;
       const holding = i === S.active && ph !== 'LOBBY';
@@ -698,6 +800,14 @@ function animate() {
       const jitter = frac > 0 && frac < 0.5 ? Math.sin(t * 40 + i) * 0.02 : 0;
       const n = machine.needles[i];
       n.rotation.z += ((-0.9 + (1 - frac) * 1.8 + jitter) - n.rotation.z) * 6 * dt;   // full = right, dead = left
+    }
+    if (machine && machine.lifeLevels[i] !== p.lives) {
+      const lives = Math.max(0, Math.min(3, p.lives));
+      const activeColor = lives === 1 ? 0xc52c35 : lives === 2 ? 0xc6a45e : 0x9aa99b;
+      machine.lifeSegments[i].forEach((material, segment) => {
+        material.color.setHex(segment < lives ? activeColor : 0x343538);
+      });
+      machine.lifeLevels[i] = p.lives;
     }
   });
 
@@ -735,7 +845,7 @@ function animate() {
     lampHex = Math.sin(t * 50) > 0 ? 0xff1e27 : 0x111111;
     rim.intensity = 22 + finalFlash * 45;
     finalFlash *= Math.pow(0.08, dt);
-  } else rim.intensity = 22;
+  } else rim.intensity = 48;
   if (machine) machine.screenMat.color.setHex(lampHex);
 
   if (shake > 0.001) {
@@ -765,6 +875,6 @@ function animate() {
   uiEl.style.left = `${Math.max(10, Math.min(window.innerWidth - 90, (kp.x * 0.5 + 0.5) * window.innerWidth))}px`;
   uiEl.style.top  = `${Math.max(85, Math.min(window.innerHeight - 85, (-kp.y * 0.5 + 0.5) * window.innerHeight))}px`;
 
-  renderer.render(scene, camera);
+  composer.render();
 }
 animate();
