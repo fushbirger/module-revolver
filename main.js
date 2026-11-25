@@ -1,16 +1,30 @@
 import * as THREE from 'three';
-import { mk, preloadBlockbenchAssets, createEnvironment, createGun, createMachine, createMafiaPlayer, PLAYER_SCALE } from './models.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mk, preloadBlockbenchAssets, resolveModelStyle, createEnvironment, createGun, createMachine, createMafiaPlayer } from './models.js';
 
-await preloadBlockbenchAssets();
+const params = new URLSearchParams(location.search);
+const MODEL_STYLE = resolveModelStyle(params.get('models') || 'lowpoly');
+await preloadBlockbenchAssets(MODEL_STYLE);
 
 /* ================================================================ config */
-const GUN_X = 0, GUN_Z = 0.35;                       // gun pivot on the table
-const RING_RX = 3.45, RING_RZ = 3.45, RING_CZ = 0.15; // seats follow the round table
-const BASE_CAM = new THREE.Vector3(0.0, 2.05, 6.8);
-const LOOK = new THREE.Vector3(0.0, 0.92, -0.45);
-let camSpread = 3.0;
+const TABLE_SCALE = 3;                                // tabletop radius/depth multiplier
+const TABLE_LIFT = 1.18;                              // keeps the taller table in proportion
+const GUN_X = 0, GUN_Z = 0.35;                        // gun pivot on the table
+const GUN_REST_Z = 1.55;                              // where it lies when nobody holds it
+const TABLE_Y = 0.856 * TABLE_LIFT;                   // tabletop surface height
+const GUN_Y = TABLE_Y + 0.06;                         // held above the tabletop
+const RING_RX = 4.55, RING_RZ = 4.55, RING_CZ = 0;    // seats just outside the 4.05 m table edge
+const EYE_HEIGHT = 1.32;                              // high stool eye line above the 1.01 m table
+const BASE_CAM = new THREE.Vector3(0.0, 2.55, 5.2);   // party-screen overview
+const LOOK = new THREE.Vector3(0.0, 0.95, 0.0);
+let camSpread = 2.6;
 let machines = [];
 let players = [];
+let nameTags = [];
 
 /* ================================================================ server state
    The server owns the game. This client only renders `S` and sends actions:
@@ -21,7 +35,6 @@ let stateAt = performance.now();
 let hoverLocal = null, hoverRemote = null;
 let parties = [], lobbyError = '';
 
-const params = new URLSearchParams(location.search);
 const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> create a test party, add bots, start
 let quickDone = false;
 
@@ -61,80 +74,257 @@ ws.onmessage = (e) => {
 
 /* ================================================================ scene */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x09090b);
-scene.fog = new THREE.FogExp2(0x160d14, 0.026);
+scene.background = new THREE.Color(0x050608);
+scene.fog = new THREE.FogExp2(0x07080b, 0.043);
 
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 0.05, 120);
 const baseCamPos = BASE_CAM.clone();
+const baseQuat = new THREE.Quaternion();
 let cameraRoll = 0;
 camera.position.copy(baseCamPos);
 camera.lookAt(LOOK);
+baseQuat.copy(camera.quaternion);
+
+// Free look: drag anywhere to turn your head, arrow keys nudge it, double-click recentres.
+const VIEW_YAW_LIMIT = 1.15, VIEW_PITCH_MIN = -0.5, VIEW_PITCH_MAX = 0.55;
+const view = { yaw: 0, pitch: 0, yawTarget: 0, pitchTarget: 0 };
+const viewEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const viewQuat = new THREE.Quaternion();
+let hasLooked = false;
+function resetView() { view.yaw = view.pitch = view.yawTarget = view.pitchTarget = 0; }
+function nudgeView(yaw, pitch) {
+  if (yaw || pitch) hasLooked = true;
+  view.yawTarget = THREE.MathUtils.clamp(view.yawTarget + yaw, -VIEW_YAW_LIMIT, VIEW_YAW_LIMIT);
+  view.pitchTarget = THREE.MathUtils.clamp(view.pitchTarget + pitch, VIEW_PITCH_MIN, VIEW_PITCH_MAX);
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.34;
+renderer.toneMappingExposure = 0.95;
 document.body.appendChild(renderer.domElement);
+
+let composer = null, bloom = null, gradePass = null;
 
 function updateResponsiveCamera() {
   const aspect = window.innerWidth / window.innerHeight;
-  const viewer = S.you >= 0 ? players[S.you] : null;
+  const spectator = S.phase === 'GAME_OVER' && S.you >= 0;
+  const viewer = S.you >= 0 && !spectator ? players[S.you] : null;
   camera.aspect = aspect;
   camera.fov = aspect < 1
-    ? Math.min(viewer ? 96 : 84, (viewer ? 72 : 58) / Math.sqrt(aspect))
-    : viewer ? 72 : 58;
+    ? Math.min(viewer ? 86 : 74, (viewer ? 64 : 46) / Math.sqrt(aspect))
+    : viewer ? 64 : 46;
   camera.updateProjectionMatrix();
+  const look = spectator ? new THREE.Vector3(0, 0.92, 0) : LOOK;
+  let viewerTarget = null;
   if (viewer) {
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(viewer.root.quaternion);
-    baseCamPos.copy(viewer.root.position).addScaledVector(forward, 0.12);
-    baseCamPos.y = viewer.root.position.y + 1.56 * PLAYER_SCALE;
+    baseCamPos.copy(viewer.root.position).addScaledVector(forward, -0.3);
+    baseCamPos.y = viewer.root.position.y + EYE_HEIGHT + 0.05;
+    // A table this wide is read by looking down the felt, not across the horizon.
+    viewerTarget = viewer.root.position.clone().addScaledVector(forward, 2.6);
+    viewerTarget.y = TABLE_Y + 0.04;
   } else {
-    // Keep the room overview while the player is in the party screens.
+    // Keep the room overview while the player is in the party screens or spectating.
     const dir = BASE_CAM.clone().sub(LOOK);
     const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect;
-    const k = Math.max(1, (camSpread / tanH) / dir.length());
+    const spread = spectator ? camSpread + 1.5 : camSpread;
+    const k = Math.max(1, (spread / tanH) / dir.length());
     baseCamPos.copy(LOOK).addScaledVector(dir, k);
   }
   camera.position.copy(baseCamPos);
-  if (viewer) camera.lookAt(GUN_X, viewer.root.position.y + 0.78 * PLAYER_SCALE, GUN_Z);
-  else camera.lookAt(LOOK);
+  if (viewerTarget) camera.lookAt(viewerTarget);
+  else camera.lookAt(look);
+  baseQuat.copy(camera.quaternion);
   cameraRoll = 0;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (typeof composer !== 'undefined' && composer) {
+    composer.setPixelRatio(pixelRatio);
+    composer.setSize(window.innerWidth, window.innerHeight);
+  }
 }
-updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
 
-const spot = new THREE.SpotLight(0xffd27a, 360, 20, Math.PI / 5, 0.2, 1.05);
-spot.position.set(0.0, 6.2, 1.2);
-spot.target.position.set(0, 0.2, -0.3);
+/* Buckshot Roulette lighting: one hard overhead practical, a red rim, almost no ambient. */
+// The pendant hangs at ~4.6 m, so the practical sits just under its glass; above it
+// the shade would shadow the middle of the table.
+const spot = new THREE.SpotLight(0xffe2b0, 210, 14, Math.PI / 3.8, 0.75, 1.35);
+spot.position.set(0.0, 4.45, 0.0);
+spot.target.position.set(0, 0.82, 0);
 spot.castShadow = true;
-const rim = new THREE.PointLight(0xb20d25, 52, 15, 1.8);
-rim.position.set(0, 2.7, -6.2);
-const warmFill = new THREE.PointLight(0xffca70, 24, 11, 1.8);
-warmFill.position.set(4.8, 3.2, 1.4);
-scene.add(
-  new THREE.HemisphereLight(0x9ba5b3, 0x171014, 0.32),
-  spot, spot.target, rim, warmFill
+spot.shadow.mapSize.set(2048, 2048);
+spot.shadow.camera.near = 0.5;
+spot.shadow.camera.far = 14;
+spot.shadow.bias = -0.0007;
+spot.shadow.normalBias = 0.022;
+// A wide, weak spill from the same bulb so the players' faces read at the table edge
+// without flattening the pool the key light throws on the felt.
+const spill = new THREE.SpotLight(0xffd7a6, 46, 11, Math.PI / 2.2, 0.9, 1.6);
+spill.position.copy(spot.position);
+spill.target.position.set(0, 1.0, 0);
+// The felt throws the lamp back up at the faces of everyone seated round it. Without
+// this the players are holes in the frame at 8 m; with it they read like the reference.
+const bounce = new THREE.PointLight(0xff9c62, 58, 13, 1.6);
+bounce.position.set(0, 0.62, 0);
+const rim = new THREE.PointLight(0x9c1119, 150, 16, 2.0);
+rim.position.set(0, 2.3, -5.2);
+const coldFill = new THREE.PointLight(0x2f3d4d, 2.5, 8, 2.0);
+coldFill.position.set(4.6, 3.0, 3.4);
+const hemi = new THREE.HemisphereLight(0x2c3138, 0x050506, 0.32);
+const houseFill = new THREE.DirectionalLight(0xcfd3d8, 0.45);
+houseFill.position.set(0.6, 3.0, 5.0);
+houseFill.target.position.set(0, 0.9, 0);
+const sconceL = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
+sconceL.position.set(-6.5, 2.7, -9.2);
+const sconceR = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
+sconceR.position.set(6.5, 2.7, -9.2);
+scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, bounce, rim, coldFill, sconceL, sconceR);
+
+// Faint volumetric cone under the pendant so the key light reads as a real fixture.
+const muzzleLight = new THREE.PointLight(0xffdfae, 0, 5, 2);
+scene.add(muzzleLight);
+
+const lightCone = new THREE.Mesh(
+  new THREE.ConeGeometry(4.9, 5.6, 48, 1, true),
+  new THREE.MeshBasicMaterial({
+    color: 0xd9d0b6, transparent: true, opacity: 0.028,
+    side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
+  })
 );
+lightCone.position.set(0, 3.7, 0);
+scene.add(lightCone);
+
+// A tiny procedural environment gives the metals something to reflect.
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene();
+envScene.background = new THREE.Color(0x06070a);
+const envPanel = (color, size, position, rotation) => {
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(size[0], size[1]),
+    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })
+  );
+  panel.position.set(...position);
+  panel.rotation.set(...rotation);
+  envScene.add(panel);
+};
+envPanel(0xfff6e2, [3, 3], [0, 3, 0], [-Math.PI / 2, 0, 0]);
+envPanel(0x7d1016, [4, 2], [0, 0.6, -4], [0, 0, 0]);
+envPanel(0x1a1d22, [8, 8], [0, -1, 0], [-Math.PI / 2, 0, 0]);
+const envRT = pmrem.fromScene(envScene, 0.04);
+scene.environment = envRT.texture;
+pmrem.dispose();
 
 const environment = createEnvironment(scene);
+const tableNode = environment.getObjectByName('Round Pedestal Table');
+if (!tableNode) throw new Error('Casino environment is missing the table');
+tableNode.scale.set(TABLE_SCALE, TABLE_LIFT, TABLE_SCALE);
 const sign = environment.getObjectByName('Fortuna Sign');
 let lettering;
 sign?.traverse(object => {
   if (!lettering && object.isMesh && object.name === 'FORTUNA lettering') lettering = object;
 });
 if (!sign || !lettering) throw new Error('Casino environment is missing its Fortuna marquee');
-lettering.material.emissive.setHex(0xffbd36);
-lettering.material.emissiveIntensity = 2.4;
 const gun = createGun(scene);
+gun.model.rotation.set(0.05, 0.2, 0.12);
+
+/* ---------------------------------------------------------------- post grade */
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uSaturation: { value: 0.55 },
+    uContrast: { value: 1.2 },
+    uVignette: { value: 0.92 },
+    uGrain: { value: 0.055 }
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform vec2 uResolution;
+    uniform float uSaturation;
+    uniform float uContrast;
+    uniform float uVignette;
+    uniform float uGrain;
+    varying vec2 vUv;
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    void main() {
+      vec2 uv = vUv;
+      // hallucination: the whole frame breathes and drifts like it is under water
+      uv += vec2(
+        sin(uv.y * 13.0 + uTime * 0.7) + sin(uv.y * 31.0 - uTime * 0.31),
+        cos(uv.x * 11.0 + uTime * 0.55) + cos(uv.x * 27.0 + uTime * 0.23)
+      ) * 0.004;
+      uv = (uv - 0.5) * (1.0 + sin(uTime * 0.5) * 0.012) + 0.5;
+      vec2 dir = uv - 0.5;
+      float radius = dot(dir, dir);
+      float aberration = (0.0010 + radius * 0.0042) * (1.0 + sin(uTime * 0.9) * 0.3);
+      vec3 color;
+      color.r = texture2D(tDiffuse, uv + dir * aberration).r;
+      color.g = texture2D(tDiffuse, uv).g;
+      color.b = texture2D(tDiffuse, uv - dir * aberration).b;
+
+      float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+      vec3 graded = mix(vec3(luma), color, uSaturation);
+
+      // cold shadows, bone highlights, a whisper of blood in the midtones
+      graded = mix(graded, graded * vec3(0.86, 0.93, 1.08), (1.0 - smoothstep(0.0, 0.42, luma)) * 0.6);
+      graded = mix(graded, graded * vec3(1.07, 1.0, 0.9), smoothstep(0.5, 1.0, luma) * 0.55);
+      graded.r += smoothstep(0.25, 0.8, luma) * (1.0 - smoothstep(0.8, 1.0, luma)) * 0.012;
+
+      graded = max(graded - 0.014, 0.0);
+      graded = (graded - 0.5) * uContrast + 0.5;
+      graded = pow(max(graded, 0.0), vec3(1.05));
+
+      // slow channel drift and a breathing exposure: colours crawl, the room inhales
+      graded = mix(graded, graded.gbr, 0.09 + 0.06 * sin(uTime * 0.6));
+      graded *= 1.0 + sin(uTime * 0.8 + uv.y * 2.0) * 0.03;
+
+      float vignette = 1.0 - smoothstep(0.3, 0.95, length(dir * vec2(1.0, 1.12)));
+      graded *= mix(1.0, vignette, uVignette);
+
+      float grain = hash(uv * uResolution + fract(uTime) * 91.7) - 0.5;
+      graded += grain * uGrain * (1.0 - luma * 0.55);
+
+      gl_FragColor = vec4(max(graded, 0.0), 1.0);
+    }
+  `
+};
+
+const postEnabled = params.get('post') !== '0';
+composer = postEnabled ? new EffectComposer(renderer) : null;
+if (composer) {
+  composer.addPass(new RenderPass(scene, camera));
+  bloom = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.72, 0.8
+  );
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  gradePass = new ShaderPass(GradeShader);
+  gradePass.renderToScreen = true;
+  composer.addPass(gradePass);
+}
+updateResponsiveCamera();
+
 
 // shared confetti resources
 const confettiGeo = new THREE.PlaneGeometry(0.09, 0.06);
-const confettiMats = [0xb20d18, 0xd9d4c8, 0x5b0b10, 0x24262a, 0xeee7d5]
+const confettiMats = [0x8e1119, 0xd8d2c2, 0x3a0a0e, 0x1b1c1e, 0xa9a292]
   .map(c => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
 const confetti = [];
 
@@ -153,60 +343,139 @@ function clearSeats() {
   };
   players.forEach(p => disposeObject(p.root));
   players = [];
+  nameTags.forEach(tag => { scene.remove(tag.sprite); tag.material.dispose(); tag.texture.dispose(); });
+  nameTags = [];
   machines.forEach(machine => disposeObject(machine.root));
   machines = [];
-  camSpread = 3.0;
+  camSpread = 2.6;
   updateResponsiveCamera();
 }
+/* ================================================================ name tags above each seat */
+function drawNameTag(tag, name) {
+  const { canvas, ctx, texture } = tag;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '600 56px ui-monospace, "SF Mono", Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = '8px';
+  ctx.lineWidth = 12;
+  ctx.strokeStyle = 'rgba(6, 6, 8, 0.92)';
+  ctx.strokeText(name, canvas.width / 2, canvas.height / 2 + 2);
+  ctx.fillStyle = '#f2ece0';
+  ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 2);
+  texture.needsUpdate = true;
+}
+
+function createNameTag(name) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  const material = new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false, fog: false, toneMapped: false
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.75, 0.44, 1);
+  const tag = { canvas, ctx, texture, material, sprite, label: name };
+  drawNameTag(tag, name);
+  return tag;
+}
+
+function syncNameTags() {
+  nameTags.forEach((tag, i) => {
+    const name = S.players[i]?.name || `SEAT ${i + 1}`;
+    if (name === tag.label) return;
+    tag.label = name;
+    drawNameTag(tag, name);
+  });
+}
+
 function buildSeats(n) {
   clearSeats();
-  const seatWidth = (18 / 16) * PLAYER_SCALE * 1.08;
+  const seatWidth = 0.66;
   const ringRadius = Math.max(RING_RX, seatWidth / (2 * Math.sin(Math.PI / n)));
   for (let i = 0; i < n; i++) {
     const ang = (i / n) * Math.PI * 2;
     const x = ringRadius * Math.sin(ang);
-    const z = RING_CZ - ringRadius * Math.cos(ang);
+    const z = RING_CZ + ringRadius * Math.cos(ang);
     const rotY = Math.atan2(GUN_X - x, GUN_Z - z);       // seat faces the gun
-    const pl = createMafiaPlayer(scene, x, 0.14, z, rotY, i);
+    const pl = createMafiaPlayer(scene, x, 0, z, rotY, i);
     pl.root.userData.idx = i;
     pl.deadAt = 0;
     players.push(pl);
+    const tag = createNameTag(S.players[i]?.name || `SEAT ${i + 1}`);
+    const box = new THREE.Box3().setFromObject(pl.root);
+    tag.sprite.position.set(x, box.max.y + 0.28, z);
+    tag.idx = i;
+    scene.add(tag.sprite);
+    nameTags.push(tag);
   }
-  const clockRadius = Math.max(2.75, (86 / 16 * 0.5 * 1.08) / (2 * Math.sin(Math.PI / n)));
+  const clockRadius = Math.max(1.18, 0.36 / (2 * Math.sin(Math.PI / n)));
   machines = players.map(player => {
     const machine = createMachine(scene);
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.root.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.root.quaternion);
     machine.root.position.copy(player.root.position)
-      .addScaledVector(forward, ringRadius - clockRadius);
-    machine.root.position.y = 0.29;
-    machine.root.rotation.y = player.root.rotation.y;
-    machine.root.scale.multiplyScalar(0.5);
+      .addScaledVector(forward, ringRadius - clockRadius - 0.5)
+      .addScaledVector(right, 0.32);
+    machine.root.position.y = TABLE_Y + 0.03;
+    machine.root.rotation.y = player.root.rotation.y;  // dial faces the seat
+    machine.root.scale.multiplyScalar(0.95);
     return machine;
   });
-  camSpread = ringRadius + 1.0;
+  camSpread = ringRadius + 0.9;
+  resetView();
   updateResponsiveCamera();
 }
 
 /* ================================================================ HTML overlay */
+const HUD_FONT = `ui-monospace,"SFMono-Regular",Menlo,Consolas,"Courier New",monospace`;
+const CUT = 'clip-path:polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,9px 100%,0 calc(100% - 9px))';
+const BTN = `${CUT};padding:11px 22px;background:rgba(8,8,9,.86);border:1px solid #6d685d;color:#ded8c8;font-family:${HUD_FONT};font-size:12px;font-weight:600;letter-spacing:.22em;text-transform:uppercase`;
 document.body.insertAdjacentHTML('beforeend', `
-  <div id="msg" style="position:fixed;top:58px;left:50%;transform:translateX(-50%);font-size:15px;font-weight:bold;letter-spacing:2px;color:#ffe0a0;text-shadow:0 0 12px rgba(255,183,55,.8),0 2px 4px #000;text-align:center;width:92%;z-index:10;pointer-events:none"></div>
-  <div id="ui" style="position:fixed;display:none;flex-direction:column;gap:6px;transform:translate(14px,-50%);z-index:10">
-      <button id="bStart" disabled style="padding:10px 16px;background:#3b2509;border:2px solid #e6b84a;color:#ffe09a;font-family:inherit;font-size:13px;font-weight:bold;letter-spacing:2px;text-shadow:0 0 8px #d59128;box-shadow:0 0 14px rgba(230,184,74,.32);opacity:0.4">START</button>
-      <button id="bStop" disabled style="padding:10px 16px;background:#3a080e;border:2px solid #e03b48;color:#ff9a8f;font-family:inherit;font-size:13px;font-weight:bold;letter-spacing:2px;text-shadow:0 0 8px #ee2638;box-shadow:0 0 14px rgba(224,59,72,.3);opacity:0.4">STOP</button>
+  <div id="scanlines"></div>
+  <div id="hudTag">FORTUNA&nbsp;&nbsp;//&nbsp;&nbsp;TABLE</div>
+  <div id="msg"></div>
+  <div id="hint" style="position:fixed;top:78px;left:0;right:0;z-index:6;text-align:center;pointer-events:none;font-family:${HUD_FONT};font-size:10px;font-weight:600;letter-spacing:.28em;color:#8d887c;text-transform:uppercase"></div>
+  <div id="ui">
+      <button id="bStart" disabled style="${BTN};border-color:#e9e4d6;background:#e9e4d6;color:#08080a">SPIN</button>
+      <button id="bStop" disabled style="${BTN};border-color:#a11a1f;background:rgba(36,6,8,.9);color:#ffd9d4">STOP</button>
   </div>
-  <div id="pick" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
-    <button id="bSelf" style="padding:10px 18px;background:#161518;border:2px solid #9e1b24;color:#ddd4c2;font-family:inherit;font-size:13px;font-weight:bold">SHOOT YOURSELF</button>
+  <div id="pick">
+    <button id="bSelf" style="${BTN};border-color:#a11a1f;color:#ffd9d4">SHOOT YOURSELF</button>
   </div>
-  <div id="resetRow" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:11">
-    <button id="bReset" style="padding:11px 16px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:13px">NEW MATCH</button>
+  <div id="resetRow">
+    <button id="bReset" style="${BTN}">NEW MATCH</button>
+    <button id="bLeave" style="${BTN};border-color:#a11a1f;color:#ffd9d4">LEAVE TABLE</button>
   </div>
   <button id="soundToggle" type="button" aria-label="Mute game sounds" aria-pressed="false"
-    style="position:fixed;top:12px;right:12px;z-index:21;padding:8px 11px;background:rgba(12,11,12,.92);border:1px solid #8a7b5d;color:#ddd4c2;font:12px Georgia,serif;letter-spacing:1px">SOUND: ON</button>
-  <div id="lobby" style="display:flex;position:fixed;inset:0;align-items:center;justify-content:center;z-index:20;background:rgba(2,2,3,.72)">
-    <div id="lobbyBox" style="min-width:260px;max-width:90%;background:#0b0a0c;border:2px solid #8a7b5d;padding:18px;font-size:13px;color:#ddd4c2;line-height:1.7"></div>
+    style="${CUT};position:fixed;top:16px;right:16px;z-index:21;padding:9px 14px;background:rgba(8,8,9,.86);border:1px solid #4b4841;color:#b9b3a5;font-family:${HUD_FONT};font-size:10px;letter-spacing:.24em">SOUND ON</button>
+  <div id="lobby" style="display:flex;position:fixed;inset:0;align-items:center;justify-content:center;z-index:20;background:rgba(3,3,4,.8)">
+    <div id="lobbyBox" style="min-width:280px;max-width:90%;background:#0a0a0b;border:1px solid #6d685d;padding:22px;font-family:${HUD_FONT};font-size:12px;letter-spacing:.06em;color:#ded8c8;line-height:1.75;box-shadow:0 30px 90px #000,inset 0 0 0 1px rgba(222,216,200,.05)"></div>
   </div>
 `);
+const styleTag = document.createElement('style');
+styleTag.textContent = `
+  #msg{position:fixed;top:44px;left:50%;transform:translateX(-50%);font-family:${HUD_FONT};font-size:13px;font-weight:600;letter-spacing:.28em;text-transform:uppercase;color:#efeadd;text-shadow:0 0 22px rgba(0,0,0,.95),0 2px 2px #000;text-align:center;width:92%;z-index:10;pointer-events:none}
+  #ui{position:fixed;display:none;right:30px;bottom:28px;gap:12px;z-index:12}
+  #ui button{transition:opacity .12s ease,filter .12s ease}
+  #ui button[disabled]{visibility:hidden}
+  #pick{display:none;position:fixed;right:30px;bottom:92px;z-index:12}
+  #resetRow{display:none;position:fixed;right:30px;bottom:28px;gap:10px;z-index:12}
+  #hudTag{position:fixed;top:18px;left:20px;z-index:10;font-family:${HUD_FONT};font-size:10px;letter-spacing:.34em;color:#6f6b61;text-transform:uppercase;pointer-events:none}
+  #scanlines{position:fixed;inset:0;z-index:4;pointer-events:none;opacity:.16;
+    background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,0) 2px,rgba(0,0,0,.5) 3px,rgba(0,0,0,0) 4px)}
+  button{cursor:pointer}
+  button:disabled{cursor:default}
+  #ui button:not(:disabled):hover{filter:brightness(1.25)}
+  #lobbyBox input,#lobbyBox select{font-family:${HUD_FONT};font-size:12px;letter-spacing:.08em}
+`;
+document.head.appendChild(styleTag);
 const msgEl    = document.getElementById('msg');
+const hintEl   = document.getElementById('hint');
 const uiEl     = document.getElementById('ui');
 const bStart   = document.getElementById('bStart');
 const bStop    = document.getElementById('bStop');
@@ -214,6 +483,7 @@ const pickEl   = document.getElementById('pick');
 const bSelf    = document.getElementById('bSelf');
 const resetRow = document.getElementById('resetRow');
 const bReset   = document.getElementById('bReset');
+const bLeave   = document.getElementById('bLeave');
 const lobbyEl  = document.getElementById('lobby');
 const lobbyBox = document.getElementById('lobbyBox');
 const soundToggle = document.getElementById('soundToggle');
@@ -313,9 +583,9 @@ function playStartCue() {
 
 soundToggle.onclick = () => {
   soundsMuted = !soundsMuted;
-  soundToggle.textContent = soundsMuted ? 'SOUND: OFF' : 'SOUND: ON';
+  soundToggle.textContent = soundsMuted ? 'SOUND OFF' : 'SOUND ON';
   soundToggle.setAttribute('aria-label', soundsMuted ? 'Enable game sounds' : 'Mute game sounds');
-  soundToggle.setAttribute('aria-pressed', String(soundsMuted));
+  soundToggle.setAttribute('aria-pressed', String(!soundsMuted));
   if (soundsMuted) stopSpinSound();
   else {
     unlockAudio();
@@ -324,12 +594,13 @@ soundToggle.onclick = () => {
 };
 
 function setControls(startOn, stopOn) {
-  bStart.disabled = !startOn; bStart.style.opacity = startOn ? '1' : '0.4';
-  bStop.disabled  = !stopOn;  bStop.style.opacity  = stopOn  ? '1' : '0.4';
+  bStart.disabled = !startOn;
+  bStop.disabled = !stopOn;
 }
 bStart.onclick = () => send({ t: 'spin' });
 bStop.onclick  = () => send({ t: 'stop' });
 bReset.onclick = () => send({ t: 'rematch' });
+bLeave.onclick = () => send({ t: 'leaveTable' });
 
 let msgHold = { text: '', until: 0 };
 function hold(text, ms) { msgHold = { text, until: performance.now() + ms }; }
@@ -367,7 +638,7 @@ function renderLobby() {
   if (sig === lobbySig) return;        // don't wipe the name box while typing
   lobbySig = sig;
   const btn = 'padding:8px 12px;background:#161518;border:2px solid #666;color:#ccc;font-family:inherit;font-size:12px;font-weight:bold;margin-right:6px';
-  const exitBtn = 'position:fixed;right:20px;bottom:20px;padding:12px 18px;background:#063514;border:3px solid #38df69;color:#c7ffd4;font-family:inherit;font-size:13px;font-weight:bold;letter-spacing:2px;text-shadow:0 0 8px #55ff7a;box-shadow:0 0 14px rgba(48,220,95,.45);cursor:pointer';
+  const exitBtn = 'position:fixed;right:20px;bottom:20px;padding:12px 18px;background:#240709;border:1px solid #a11a1f;color:#ffd9d4;font-family:inherit;font-size:12px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;cursor:pointer';
   let h = '<div style="font-size:15px;letter-spacing:2px;margin-bottom:10px">ROULETTE PARTIES</div>';
   if (S.phase === 'PARTIES') {
     if (partyScreen === 'make') {
@@ -466,6 +737,7 @@ function applyState(m) {
     else if (prev.phase === 'SPINNING' && S.phase === 'SETTLING') playSpinStop();
     else stopSpinSound();
     if (S.phase === 'AIMING') playCockingSound();
+    updateResponsiveCamera();
   }
 
   if (S.phase === 'LOBBY' || S.phase === 'PARTIES') { if (players.length) clearSeats(); }
@@ -480,6 +752,7 @@ function applyState(m) {
     if (sp.dead && !wasDead) p.deadAt = performance.now();
   });
 
+  syncNameTags();
   const me = S.you >= 0 && S.you === S.active;
   const inGame = S.phase !== 'LOBBY' && S.phase !== 'PARTIES';
   setControls(S.phase === 'IDLE' && me, S.phase === 'SPINNING' && me);
@@ -488,7 +761,8 @@ function applyState(m) {
   const canPassOnTouch = me && touchUi && S.phase === 'NEIGHBOR';
   pickEl.style.display = canSelect || canPassOnTouch ? 'flex' : 'none';
   renderSelfChoice();
-  resetRow.style.display = S.phase === 'GAME_OVER' && S.you === S.host ? 'block' : 'none';
+  resetRow.style.display = S.phase === 'GAME_OVER' ? 'flex' : 'none';
+  bReset.style.display = S.you === S.host ? 'inline-block' : 'none';
   renderLobby();
 
   if (quick && !quickDone && S.phase === 'LOBBY' && S.you >= 0 && S.host === S.you) {
@@ -500,7 +774,7 @@ function applyState(m) {
 
 let lampOverride = 0, lampUntil = 0;
 const lamp = (hex, ms) => { lampOverride = hex; lampUntil = performance.now() + ms; };
-let shake = 0, finalFlash = 0, casinoSurge = 0;
+let shake = 0, finalFlash = 0, casinoSurge = 0, muzzleFlash = 0;
 
 function burst(i) {
   const p = players[i]; if (!p) return;
@@ -526,12 +800,12 @@ function onEvent(m) {
       machines[m.target]?.needles.forEach((needle, index) => { needle.visible = index < m.lives; });
     }
     if (!m.dead && players[m.target]) players[m.target].hitAt = performance.now();
-    shake = 0.24; gunKick = 0.08; lamp(0x9e1b24, 1100);
+    shake = 0.24; gunKick = 0.025; muzzleFlash = 1; lamp(0x9e1b24, 1100);
     if (m.dead) { burst(m.target); hold(`${nm(m.target)} ELIMINATED!`, 1700); }
     else hold(`BANG! ${nm(m.target)} DROPS TO ${m.lives} ${m.lives === 1 ? 'LIFE' : 'LIVES'}`, 1500);
   } else if (m.e === 'timeout') {
     playTone(115, .35, 'triangle', .18, 45);
-    burst(m.who); hold(`${nm(m.who)} DID NOT RESPOND — REMOVED`, 2200);
+    hold(`${nm(m.who)} RAN OUT OF TIME — THE GUN GOES TO ${nm(m.to)}`, 2200);
   } else if (m.e === 'sudden') {
     casinoSurge = 1.4;
     playTone(260, .55, 'sawtooth', .12, 70);
@@ -568,6 +842,8 @@ function statusText() {
     const left = Math.max(0, S.timeLeft - (performance.now() - stateAt));
     const s = Math.ceil(left / 1000);
     t += `  [${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}]`;
+    const window = S.windowMs || 20000;
+    if (me && left <= Math.max(2500, window * 0.25)) t = `HURRY — ${t}`;
   }
   return t;
 }
@@ -623,16 +899,51 @@ function setHover(i) {
   hoverLocal = i;
   send({ t: 'hover', i });
 }
-renderer.domElement.addEventListener('pointermove', (e) => {
+const canvasEl = renderer.domElement;
+let drag = null;
+canvasEl.style.cursor = 'grab';
+canvasEl.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
+  canvasEl.setPointerCapture?.(e.pointerId);
+  canvasEl.style.cursor = 'grabbing';
+});
+canvasEl.addEventListener('pointermove', (e) => {
+  if (drag && e.pointerId === drag.id) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    drag.moved += Math.hypot(dx, dy);
+    nudgeView(-dx * 0.0042, -dy * 0.0042);
+    return;
+  }
   if (!mySelecting()) { hoverLocal = null; return; }
   const i = pickPlayerAt(e);
   setHover(i);
-  renderer.domElement.style.cursor = i !== null ? 'pointer' : '';
+  canvasEl.style.cursor = i !== null ? 'pointer' : 'grab';
 });
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (!mySelecting()) return;
-  const i = pickPlayerAt(e);
-  if (i !== null) { send({ t: 'pick', i }); setHover(null); }
+canvasEl.addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  const tap = drag.moved < 8;
+  drag = null;
+  canvasEl.releasePointerCapture?.(e.pointerId);
+  canvasEl.style.cursor = mySelecting() ? 'pointer' : 'grab';
+  if (tap && mySelecting()) {
+    const i = pickPlayerAt(e);
+    if (i !== null) { send({ t: 'pick', i }); setHover(null); }
+  }
+});
+canvasEl.addEventListener('pointercancel', () => { drag = null; canvasEl.style.cursor = 'grab'; });
+canvasEl.addEventListener('dblclick', resetView);
+window.addEventListener('keydown', (e) => {
+  const step = 0.09;
+  if (e.key === 'ArrowLeft') nudgeView(step, 0);
+  else if (e.key === 'ArrowRight') nudgeView(-step, 0);
+  else if (e.key === 'ArrowUp') nudgeView(0, step);
+  else if (e.key === 'ArrowDown') nudgeView(0, -step);
+  else if (e.key === 'Home' || e.key === 'c') resetView();
+  else return;
+  e.preventDefault();
 });
 renderer.domElement.addEventListener('pointerleave', () => { if (mySelecting()) setHover(null); });
 bSelf.onpointerenter = () => { if (mySelecting()) setHover(S.active); };
@@ -646,7 +957,6 @@ function angleDiff(a, b) { return Math.atan2(Math.sin(a - b), Math.cos(a - b)); 
 const clock = new THREE.Clock();
 const aimPoint = new THREE.Vector3();
 const handPosition = new THREE.Vector3();
-const uiAnchor = new THREE.Vector3();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -661,8 +971,17 @@ function animate() {
   if (ph === 'AIMING' || ph === 'RESOLVING') aimIndex = S.target;
   else if (ph === 'SELECTING' || ph === 'NEIGHBOR') aimIndex = hi;
   else if (ph === 'GAME_OVER') aimIndex = S.winner;
-  aimPoint.set(0, 0.4, 0);
+  aimPoint.set(0, TABLE_Y, 0);
   if (aimIndex !== null && players[aimIndex]) players[aimIndex].head.getWorldPosition(aimPoint);
+
+  const hovering = (ph === 'SELECTING' || ph === 'NEIGHBOR') && hi !== null;
+  nameTags.forEach(tag => {
+    const p = players[tag.idx];
+    tag.sprite.visible = !!p && !p.isDead && tag.idx !== S.you;
+    const hot = hovering && hi === tag.idx;
+    tag.material.opacity = hot ? 1 : tag.idx === S.active ? 0.95 : 0.72;
+    tag.material.color.setHex(hot ? 0xffb0a0 : tag.idx === S.active ? 0xffe4b8 : 0xd6d1c3);
+  });
 
   players.forEach((p, i) => {
     if (!p.isDead) {
@@ -730,31 +1049,43 @@ function animate() {
     gun.root.position.copy(handPosition);
     const forwardX = Math.sin(gun.root.rotation.y);
     const forwardZ = Math.cos(gun.root.rotation.y);
-    gun.root.position.y += 0.12;
-    gun.root.position.x += forwardX * 0.18;
-    gun.root.position.z += forwardZ * 0.18;
+    gun.root.position.y += 0.02;
+    gun.root.position.x += forwardX * 0.06;
+    gun.root.position.z += forwardZ * 0.06;
     gunKick *= Math.pow(0.02, dt);
     gun.root.position.x -= forwardX * gunKick;
     gun.root.position.z -= forwardZ * gunKick;
   } else {
-    gun.root.position.set(GUN_X, 0.62, GUN_Z);
+    gun.root.position.set(GUN_X, TABLE_Y + 0.03, GUN_REST_Z);
     gunKick = 0;
   }
 
   // lights, status lamp
   casinoSurge *= Math.pow(0.08, dt);
   const spinBeat = spinning ? (Math.sin(t * 4.6) + 1) * 0.5 : 0;
-  spot.intensity = 360 * (0.96 + Math.sin(t * 0.27) * 0.025) + casinoSurge * 120;
-  let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0x3b8c5a : 0x8f7a45;
+  const flicker = 0.95 + Math.sin(t * 7.3) * 0.012 + Math.sin(t * 13.7) * 0.008;
+  spot.intensity = 210 * flicker + casinoSurge * 70;
+  let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0xb8ad91 : 0x4a4a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
     lampHex = Math.sin(t * 50) > 0 ? 0xff1e27 : 0x111111;
-    rim.intensity = 24 + finalFlash * 60 + spinBeat * 34 + casinoSurge * 34;
+    rim.intensity = 34 + finalFlash * 90 + spinBeat * 40 + casinoSurge * 40;
     finalFlash *= Math.pow(0.08, dt);
-  } else rim.intensity = 44 + Math.sin(t * 0.32) * 4 + spinBeat * 34 + casinoSurge * 34;
+  } else rim.intensity = 100 + Math.sin(t * 0.32) * 8 + spinBeat * 40 + casinoSurge * 40;
+  lightCone.material.opacity = 0.022 + spinBeat * 0.018 + casinoSurge * 0.02;
   machines.forEach((machine, index) => {
-    machine.screenMat.color.setHex(index === S.active ? lampHex : 0x343538);
+    const lit = index === S.active;
+    machine.screenMat.color.setHex(lit ? lampHex : 0x2b2c2e);
+    machine.screenMat.emissive.setHex(lit ? lampHex : 0x0b0c0d);
+    machine.screenMat.emissiveIntensity = lit ? 1.5 : 0.2;
   });
+
+  muzzleFlash *= Math.pow(0.0006, dt);
+  muzzleLight.intensity = muzzleFlash * 70;
+  if (muzzleFlash > 0.01) {
+    const mx = Math.sin(gun.root.rotation.y), mz = Math.cos(gun.root.rotation.y);
+    muzzleLight.position.set(gun.root.position.x + mx * 0.28, gun.root.position.y + 0.05, gun.root.position.z + mz * 0.28);
+  }
 
   if (shake > 0.001) {
     camera.position.set(
@@ -764,11 +1095,16 @@ function animate() {
     );
     shake *= Math.pow(0.02, dt);
   } else camera.position.copy(baseCamPos);
+  view.yaw += (view.yawTarget - view.yaw) * Math.min(1, 14 * dt);
+  view.pitch += (view.pitchTarget - view.pitch) * Math.min(1, 14 * dt);
+  viewEuler.set(view.pitch, view.yaw, 0);
+  viewQuat.setFromEuler(viewEuler);
+  camera.quaternion.copy(baseQuat).multiply(viewQuat);
   if (S.you >= 0) {
     camera.position.x += Math.sin(t * 0.21) * 0.009;
     camera.position.y += Math.sin(t * 0.48) * 0.012;
     const targetRoll = Math.sin(t * 0.24) * 0.0035 + Math.sin(t * 0.11) * 0.0015;
-    camera.rotateZ(targetRoll - cameraRoll);
+    camera.rotateZ(targetRoll);
     cameraRoll = targetRoll;
   }
 
@@ -782,14 +1118,19 @@ function animate() {
     if (c.m.position.y < -1) { scene.remove(c.m); confetti.splice(i, 1); }
   }
 
-  // message line + 2D buttons follow the gun
+  // message line
   setMsg(now < msgHold.until ? msgHold.text : statusText());
-  gun.root.getWorldPosition(uiAnchor);
-  uiAnchor.x += 1.0;
-  const kp = uiAnchor.project(camera);
-  uiEl.style.left = `${Math.max(10, Math.min(window.innerWidth - 90, (kp.x * 0.5 + 0.5) * window.innerWidth))}px`;
-  uiEl.style.top  = `${Math.max(85, Math.min(window.innerHeight - 85, (-kp.y * 0.5 + 0.5) * window.innerHeight))}px`;
-
-  renderer.render(scene, camera);
+  // Opponents sit at the edges of a table this wide; say so until the player has turned once.
+  const hint = S.you >= 0 && S.you === S.active && !hasLooked
+    && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR')
+    ? 'DRAG ANYWHERE TO LOOK AROUND'
+    : '';
+  if (hintEl.textContent !== hint) hintEl.textContent = hint;
+  if (gradePass) {
+    gradePass.uniforms.uTime.value = t;
+    gradePass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+  }
+  if (composer) composer.render();
+  else renderer.render(scene, camera);
 }
 animate();
