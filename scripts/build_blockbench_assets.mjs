@@ -215,17 +215,20 @@ function project(name, description) {
     parent.children.push(id);
     return id;
   };
-  const addMesh = (parent, name, vertices, faces, surface) => {
+  const addMesh = (parent, name, vertices, faces, surface, mapFaceUv = null) => {
     const uvRect = tileUv(surface);
     const meshFaces = {};
     for (const [index, points] of faces.entries()) {
       const uvs = {};
+      const mappedUvs = mapFaceUv?.(points, index);
       points.forEach((key, pointIndex) => {
         const [u0, v0, u1, v1] = uvRect;
         const corners = [
           [u0, v0], [u0, v1], [u1, v1], [u1, v0]
         ];
-        uvs[key] = corners[pointIndex] || [(u0 + u1) / 2, (v0 + v1) / 2];
+        uvs[key] = mappedUvs?.[pointIndex]
+          || corners[pointIndex]
+          || [(u0 + u1) / 2, (v0 + v1) / 2];
       });
       meshFaces[index] = { vertices: points, uv: uvs, texture: 0 };
     }
@@ -240,6 +243,46 @@ function project(name, description) {
   const cylinder = (parent, name, cx, cy, cz, radius, depth, surface, segments = 12, axis = 'y') => {
     const vertices = {};
     const faces = [];
+    const tile = tileUv(surface);
+    const axisIndex = axis === 'y' ? 1 : axis === 'z' ? 2 : 0;
+    const planeAxes = [0, 1, 2].filter(index => index !== axisIndex);
+    const lower = axis === 'y' ? cy - depth / 2 : axis === 'z' ? cz - depth / 2 : cx - depth / 2;
+    const upper = axis === 'y' ? cy + depth / 2 : axis === 'z' ? cz + depth / 2 : cx + depth / 2;
+    const center = [cx, cy, cz];
+    const mapFaceUv = (points, faceIndex) => {
+      const uv = (u, v) => [
+        tile[0] + u * (tile[2] - tile[0]),
+        tile[1] + v * (tile[3] - tile[1])
+      ];
+      const cap = faceIndex % 3 !== 0;
+      if (cap) {
+        const centerKey = points.find(key => key.endsWith('_center'));
+        const top = centerKey === 'top_center';
+        const capCenter = center.map((value, index) => value + (index === axisIndex ? (top ? 1 : -1) * depth / 2 : 0));
+        return points.map(key => {
+          const point = vertices[key];
+          return uv(
+            (point[planeAxes[0]] - (capCenter[planeAxes[0]] - radius))
+              / (2 * radius),
+            (point[planeAxes[1]] - (capCenter[planeAxes[1]] - radius))
+              / (2 * radius)
+          );
+        });
+      }
+      const segment = Math.floor(faceIndex / 3);
+      return points.map(key => {
+        const match = key.match(/^[01]_(\d+)$/);
+        const index = Number(match?.[1]);
+        const mappedAngle = index === 0 && segment === segments - 1
+          ? Math.PI * 2
+          : index / segments * Math.PI * 2;
+        const point = vertices[key];
+        return uv(
+          mappedAngle / (Math.PI * 2),
+          (point[axisIndex] - lower) / (upper - lower)
+        );
+      });
+    };
     for (let end = 0; end < 2; end++) {
       for (let i = 0; i < segments; i++) {
         const angle = i / segments * Math.PI * 2;
@@ -266,11 +309,28 @@ function project(name, description) {
       faces.push(['top_center', `1_${i}`, `1_${next}`]);
       faces.push(['bottom_center', `0_${next}`, `0_${i}`]);
     }
-    return addMesh(parent, name, vertices, faces, surface);
+    return addMesh(parent, name, vertices, faces, surface, mapFaceUv);
   };
   const torus = (parent, name, cx, cy, cz, radius, tube, surface, around = 24, sides = 6, axis = 'y') => {
     const vertices = {};
     const faces = [];
+    const tile = tileUv(surface);
+    const mapFaceUv = (points) => {
+      const indices = points.map(key => key.split('_').map(Number));
+      const unwrap = (values, size) => {
+        const result = values.slice();
+        if (Math.max(...result) - Math.min(...result) > size / 2) {
+          result.forEach((value, index) => { if (value < size / 2) result[index] += size; });
+        }
+        return result;
+      };
+      const uIndices = unwrap(indices.map(([index]) => index), around);
+      const vIndices = unwrap(indices.map(([, index]) => index), sides);
+      return points.map((_, index) => [
+        tile[0] + uIndices[index] / around * (tile[2] - tile[0]),
+        tile[1] + vIndices[index] / sides * (tile[3] - tile[1])
+      ]);
+    };
     for (let i = 0; i < around; i++) {
       const a = i / around * Math.PI * 2;
       for (let j = 0; j < sides; j++) {
@@ -291,7 +351,7 @@ function project(name, description) {
         ]);
       }
     }
-    return addMesh(parent, name, vertices, faces, surface);
+    return addMesh(parent, name, vertices, faces, surface, mapFaceUv);
   };
   const tubeBetween = (parent, name, a, b, radius, surface, segments = 8) => {
     const start = new THREEVector(a);

@@ -97,13 +97,99 @@ function buildCube(element, texture, dimensions, parentOrigin) {
 function buildMesh(element, texture, dimensions, parentOrigin) {
   const positions = [];
   const uvs = [];
+  const vertices = element.vertices || {};
+  const cylinder = Object.hasOwn(vertices, 'top_center') && Object.hasOwn(vertices, 'bottom_center');
+  const coordinateValues = Object.values(vertices);
+  const ranges = [0, 1, 2].map(axis => {
+    const values = coordinateValues.map(point => point[axis]);
+    return [Math.min(...values), Math.max(...values)];
+  });
+  const cylinderAxis = cylinder
+    ? [0, 1, 2].reduce((axis, candidate) =>
+      Math.abs(vertices['1_0'][candidate] - vertices['0_0'][candidate])
+        > Math.abs(vertices['1_0'][axis] - vertices['0_0'][axis])
+        ? candidate
+        : axis, 0)
+    : -1;
+  const cylinderPlane = [0, 1, 2].filter(axis => axis !== cylinderAxis);
+  const torusFaces = !cylinder && Object.keys(vertices).length === Object.keys(element.faces || {}).length
+    && Object.keys(vertices).every(key => /^\d+_\d+$/.test(key))
+    && Object.values(element.faces || {}).every(face => face.vertices?.length === 4);
+  const torusAround = torusFaces
+    ? Math.max(...Object.keys(vertices).map(key => Number(key.split('_')[0]))) + 1
+    : 0;
+  const torusSides = torusFaces
+    ? Math.max(...Object.keys(vertices).map(key => Number(key.split('_')[1]))) + 1
+    : 0;
+  const faceUvs = (face) => {
+    const faceKeys = face.vertices || [];
+    const faceUvValues = Object.values(face.uv || {});
+    if (!faceUvValues.length) return null;
+    const u0 = Math.min(...faceUvValues.map(uv => uv[0]));
+    const v0 = Math.min(...faceUvValues.map(uv => uv[1]));
+    const u1 = Math.max(...faceUvValues.map(uv => uv[0]));
+    const v1 = Math.max(...faceUvValues.map(uv => uv[1]));
+    const mapUv = (u, v) => [u0 + u * (u1 - u0), v0 + v * (v1 - v0)];
+
+    if (cylinder) {
+      const points = faceKeys.map(key => vertices[key]);
+      const center = ranges.map(([min, max]) => (min + max) / 2);
+      if (faceKeys.includes('top_center') || faceKeys.includes('bottom_center')) {
+        return Object.fromEntries(faceKeys.map((key, index) => {
+          const point = points[index];
+          return [key, mapUv(
+            (point[cylinderPlane[0]] - ranges[cylinderPlane[0]][0])
+              / (ranges[cylinderPlane[0]][1] - ranges[cylinderPlane[0]][0]),
+            (point[cylinderPlane[1]] - ranges[cylinderPlane[1]][0])
+              / (ranges[cylinderPlane[1]][1] - ranges[cylinderPlane[1]][0])
+          )];
+        }));
+      }
+
+      const angles = points.map(point => Math.atan2(
+        point[cylinderPlane[1]] - center[cylinderPlane[1]],
+        point[cylinderPlane[0]] - center[cylinderPlane[0]]
+      ));
+      if (Math.max(...angles) - Math.min(...angles) > Math.PI) {
+        angles.forEach((angle, index) => { if (angle < 0) angles[index] += Math.PI * 2; });
+      }
+      return Object.fromEntries(faceKeys.map((key, index) => [
+        key,
+        mapUv(
+          angles[index] / (Math.PI * 2),
+          (points[index][cylinderAxis] - ranges[cylinderAxis][0])
+            / (ranges[cylinderAxis][1] - ranges[cylinderAxis][0])
+        )
+      ]));
+    }
+
+    if (torusFaces) {
+      const indices = faceKeys.map(key => key.split('_').map(Number));
+      const unwrap = (values, size) => {
+        const result = values.map(([around]) => around);
+        if (Math.max(...result) - Math.min(...result) > size / 2) {
+          result.forEach((value, index) => { if (value < size / 2) result[index] += size; });
+        }
+        return result;
+      };
+      const around = unwrap(indices, torusAround);
+      const sides = unwrap(indices.map(([, side]) => [side]), torusSides);
+      return Object.fromEntries(faceKeys.map((key, index) => [
+        key,
+        mapUv(around[index] / torusAround, sides[index] / torusSides)
+      ]));
+    }
+
+    return null;
+  };
   for (const face of Object.values(element.faces || {})) {
     const vertices = face.vertices || [];
     if (vertices.length < 3) continue;
+    const mappedUvs = faceUvs(face);
     for (let triangle = 1; triangle < vertices.length - 1; triangle++) {
       for (const key of [vertices[0], vertices[triangle], vertices[triangle + 1]]) {
         const point = element.vertices[key];
-        const uv = face.uv?.[key] || [0, 0];
+        const uv = mappedUvs?.[key] || face.uv?.[key] || [0, 0];
         positions.push(point[0] - (element.origin?.[0] || 0), point[1] - (element.origin?.[1] || 0), point[2] - (element.origin?.[2] || 0));
         uvs.push(uv[0] / dimensions.width, 1 - uv[1] / dimensions.height);
       }
