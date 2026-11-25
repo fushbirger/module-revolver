@@ -24,6 +24,7 @@ const LOOK = new THREE.Vector3(0.0, 0.95, 0.0);
 let camSpread = 2.6;
 let machines = [];
 let players = [];
+let nameTags = [];
 
 /* ================================================================ server state
    The server owns the game. This client only renders `S` and sends actions:
@@ -338,11 +339,56 @@ function clearSeats() {
   };
   players.forEach(p => disposeObject(p.root));
   players = [];
+  nameTags.forEach(tag => { scene.remove(tag.sprite); tag.material.dispose(); tag.texture.dispose(); });
+  nameTags = [];
   machines.forEach(machine => disposeObject(machine.root));
   machines = [];
   camSpread = 2.6;
   updateResponsiveCamera();
 }
+/* ================================================================ name tags above each seat */
+function drawNameTag(tag, name) {
+  const { canvas, ctx, texture } = tag;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '600 56px ui-monospace, "SF Mono", Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = '8px';
+  ctx.lineWidth = 12;
+  ctx.strokeStyle = 'rgba(6, 6, 8, 0.92)';
+  ctx.strokeText(name, canvas.width / 2, canvas.height / 2 + 2);
+  ctx.fillStyle = '#f2ece0';
+  ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 2);
+  texture.needsUpdate = true;
+}
+
+function createNameTag(name) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  const material = new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false, fog: false, toneMapped: false
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.5, 0.375, 1);
+  const tag = { canvas, ctx, texture, material, sprite, label: name };
+  drawNameTag(tag, name);
+  return tag;
+}
+
+function syncNameTags() {
+  nameTags.forEach((tag, i) => {
+    const name = S.players[i]?.name || `SEAT ${i + 1}`;
+    if (name === tag.label) return;
+    tag.label = name;
+    drawNameTag(tag, name);
+  });
+}
+
 function buildSeats(n) {
   clearSeats();
   const seatWidth = 0.66;
@@ -356,6 +402,12 @@ function buildSeats(n) {
     pl.root.userData.idx = i;
     pl.deadAt = 0;
     players.push(pl);
+    const tag = createNameTag(S.players[i]?.name || `SEAT ${i + 1}`);
+    const box = new THREE.Box3().setFromObject(pl.root);
+    tag.sprite.position.set(x, box.max.y + 0.28, z);
+    tag.idx = i;
+    scene.add(tag.sprite);
+    nameTags.push(tag);
   }
   const clockRadius = Math.max(1.18, 0.36 / (2 * Math.sin(Math.PI / n)));
   machines = players.map(player => {
@@ -383,6 +435,7 @@ document.body.insertAdjacentHTML('beforeend', `
   <div id="scanlines"></div>
   <div id="hudTag">FORTUNA&nbsp;&nbsp;//&nbsp;&nbsp;TABLE</div>
   <div id="msg"></div>
+  <div id="hint" style="position:fixed;top:78px;left:0;right:0;z-index:6;text-align:center;pointer-events:none;font-family:${HUD_FONT};font-size:10px;font-weight:600;letter-spacing:.28em;color:#8d887c;text-transform:uppercase"></div>
   <div id="ui">
       <button id="bStart" disabled style="${BTN};border-color:#e9e4d6;background:#e9e4d6;color:#08080a">SPIN</button>
       <button id="bStop" disabled style="${BTN};border-color:#a11a1f;background:rgba(36,6,8,.9);color:#ffd9d4">STOP</button>
@@ -418,6 +471,7 @@ styleTag.textContent = `
 `;
 document.head.appendChild(styleTag);
 const msgEl    = document.getElementById('msg');
+const hintEl   = document.getElementById('hint');
 const uiEl     = document.getElementById('ui');
 const bStart   = document.getElementById('bStart');
 const bStop    = document.getElementById('bStop');
@@ -694,6 +748,7 @@ function applyState(m) {
     if (sp.dead && !wasDead) p.deadAt = performance.now();
   });
 
+  syncNameTags();
   const me = S.you >= 0 && S.you === S.active;
   const inGame = S.phase !== 'LOBBY' && S.phase !== 'PARTIES';
   setControls(S.phase === 'IDLE' && me, S.phase === 'SPINNING' && me);
@@ -783,10 +838,9 @@ function statusText() {
     const left = Math.max(0, S.timeLeft - (performance.now() - stateAt));
     const s = Math.ceil(left / 1000);
     t += `  [${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}]`;
-    if (me && left <= 10000) t = `HURRY — ${t}`;
+    const window = S.windowMs || 20000;
+    if (me && left <= Math.max(2500, window * 0.25)) t = `HURRY — ${t}`;
   }
-  // Opponents sit at the edges of a table this wide; say so until the player has turned once.
-  if (me && !hasLooked && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR')) t += '   —   DRAG TO LOOK AROUND';
   return t;
 }
 
@@ -915,6 +969,15 @@ function animate() {
   else if (ph === 'GAME_OVER') aimIndex = S.winner;
   aimPoint.set(0, TABLE_Y, 0);
   if (aimIndex !== null && players[aimIndex]) players[aimIndex].head.getWorldPosition(aimPoint);
+
+  const hovering = (ph === 'SELECTING' || ph === 'NEIGHBOR') && hi !== null;
+  nameTags.forEach(tag => {
+    const p = players[tag.idx];
+    tag.sprite.visible = !!p && !p.isDead && tag.idx !== S.you;
+    const hot = hovering && hi === tag.idx;
+    tag.material.opacity = hot ? 1 : tag.idx === S.active ? 0.9 : 0.6;
+    tag.material.color.setHex(hot ? 0xffb0a0 : tag.idx === S.active ? 0xffe4b8 : 0xd6d1c3);
+  });
 
   players.forEach((p, i) => {
     if (!p.isDead) {
@@ -1053,6 +1116,12 @@ function animate() {
 
   // message line
   setMsg(now < msgHold.until ? msgHold.text : statusText());
+  // Opponents sit at the edges of a table this wide; say so until the player has turned once.
+  const hint = S.you >= 0 && S.you === S.active && !hasLooked
+    && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR')
+    ? 'DRAG ANYWHERE TO LOOK AROUND'
+    : '';
+  if (hintEl.textContent !== hint) hintEl.textContent = hint;
   if (gradePass) {
     gradePass.uniforms.uTime.value = t;
     gradePass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);

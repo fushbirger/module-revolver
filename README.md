@@ -20,10 +20,13 @@ Optional server settings:
 
 ```bash
 SPEED=10 node server.js          # faster server timing for testing
-TURN_SECONDS=15 node server.js   # shorten the 20 s turn cap (it cannot be raised)
+TURN_SECONDS=15 node server.js   # shorten the 20 s gun window (it cannot be raised)
+PICK_SECONDS=8 node server.js    # widen the 6 s target window (3-15 s)
 ```
 
-A turn is capped at 20 seconds. Running out of time is not a death: the gun is handed to the nearest living neighbour, who then plays out their own turn.
+Two clocks per turn. The gun window is 20 seconds and starts the moment the gun lands in your hand: pressing start does not refill it, so spinning, watching the wheel and holding your nerve all come out of the same 20. Once the wheel settles, the target window opens fresh at 6 seconds.
+
+Running out of either clock is not a death: the gun is handed to the nearest living neighbour, who then plays out their own turn.
 
 ## Run in StackBlitz
 

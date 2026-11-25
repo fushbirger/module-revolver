@@ -17,7 +17,10 @@ const path = require('path');
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const SPEED = Number(process.env.SPEED) || 1;
-const TURN_MS = Math.min(20, Number(process.env.TURN_SECONDS) || 20) * 1000;   // 20 s cap: a turn is a beat, not a sit
+// One 20 s window covers everything from taking the gun to stopping the spin; the
+// target choice gets its own short window after the wheel settles.
+const GUN_MS = Math.min(20, Number(process.env.TURN_SECONDS) || 20) * 1000;
+const PICK_MS = Math.max(3, Math.min(15, Number(process.env.PICK_SECONDS) || 6)) * 1000;
 const MAX_SPIN_MS = 10_000;
 const MAX_LIVES = 3, MIN_PLAYERS = 3, MAX_PLAYERS = 12;
 const PUBLIC = __dirname;
@@ -161,6 +164,7 @@ function snapshot(c) {
     host: room.host ? room.host.seat : -1,
     you: c.seat, maxPlayers: room.maxPlayers, finalTwo: room.finalTwo, winner: room.winner,
     timeLeft: room.deadline ? Math.max(0, (room.deadline - Date.now()) * SPEED) : null,
+    windowMs: room.phase === 'IDLE' || room.phase === 'SPINNING' ? GUN_MS : PICK_MS,
     maxLives: MAX_LIVES
   };
 }
@@ -193,18 +197,29 @@ function armTimers(room) {
   clearTimeout(room.botTimer); clearTimeout(room.turnTimer);
   room.botTimer = room.turnTimer = null;
   room.deadline = null;
+  if (room.phase !== 'SELECTING' && room.phase !== 'NEIGHBOR') room.pickDeadline = null;
   if (!DECISION.includes(room.phase)) return;
   const s = room.seats[room.active];
   if (!s || s.dead) return;
   if (s.bot) {
     const d = { IDLE: 900, SPINNING: 1200 + Math.random() * 2200, SELECTING: 900, NEIGHBOR: 900 }[room.phase];
     room.botTimer = setTimeout(() => botAct(room), d / SPEED);
-  } else if (s.away) {
-    room.turnTimer = setTimeout(() => timeoutPlayer(room), 300 / SPEED);   // gone: counts as no response
-  } else {
-    room.deadline = Date.now() + TURN_MS / SPEED;
-    room.turnTimer = setTimeout(() => timeoutPlayer(room), TURN_MS / SPEED);
+    return;
   }
+  if (s.away) {
+    room.turnTimer = setTimeout(() => timeoutPlayer(room), 300 / SPEED);   // gone: counts as no response
+    return;
+  }
+  const now = Date.now();
+  // The gun clock is set once per holder, so pressing start does not refill it.
+  if (room.phase === 'IDLE' || room.phase === 'SPINNING') {
+    if (!room.gunDeadline) room.gunDeadline = now + GUN_MS / SPEED;
+    room.deadline = room.gunDeadline;
+  } else {
+    if (!room.pickDeadline) room.pickDeadline = now + PICK_MS / SPEED;
+    room.deadline = room.pickDeadline;
+  }
+  room.turnTimer = setTimeout(() => timeoutPlayer(room), Math.max(50, room.deadline - now));
 }
 
 function botAct(room) {
@@ -244,6 +259,7 @@ function startGame(room) {
 function nextHolder(room, i) {
   room.active = i; room.phase = 'IDLE';
   room.target = null; room.neighbors = null; room.hover = null;
+  room.gunDeadline = null; room.pickDeadline = null;
   change(room);
 }
 function gameOver(room, i) {
@@ -507,7 +523,7 @@ function onClose(c) {
 
 server.listen(PORT, HOST, () => {
   console.log(`Roulette table running: http://${HOST}:${PORT}`);
-  console.log(`  speed x${SPEED}, inactivity limit ${TURN_MS / 1000}s`);
+  console.log(`  speed x${SPEED}, gun window ${GUN_MS / 1000}s, pick window ${PICK_MS / 1000}s`);
   console.log(`  maximum spin ${MAX_SPIN_MS / 1000}s`);
   console.log('  quick test: open /?quick=3 (you + 3 bots, auto-start)');
 });
