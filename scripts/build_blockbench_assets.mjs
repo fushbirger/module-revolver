@@ -1090,6 +1090,14 @@ async function buildModels(style, atlas) {
   casino.cylinder(props, 'Ashtray well', -34.5, 16.87, 19.5, 2.4, 0.35, 'enamel', casino.D.small, 'y');
   casino.cylinder(props, 'Cigar', -34.5, 17.17, 19.5, 0.7, 3.8, 'leather', casino.D.tiny, 'x');
   casino.cylinder(props, 'Cigar ember', -32.5, 17.17, 19.5, 0.66, 0.3, 'blood', casino.D.tiny, 'x');
+  // The pot: stacks and the deck in the middle of the felt so the centre of the
+  // table is not an empty acre when only three players are seated.
+  [[-4.2, 3.6, 0, 4], [1.2, 5.4, 1, 3], [5.0, -1.4, 2, 5], [-1.8, -4.8, 3, 2]].forEach(([px, pz, c, h]) => {
+    for (let i = 0; i < h; i++) {
+      casino.cylinder(props, 'Pot chip', px, 16.35 + i * 0.35, pz, 1.76, 0.31, chipColors[c], casino.D.small, 'y');
+    }
+  });
+  casino.addCube(props, 'Card deck', [-7.6, 16.2, -1.4], [-3.8, 16.95, 3.2], 'bone', [0, 14, 0]);
   casino.cylinder(props, 'Whiskey glass', 34.5, 17.46, 20.4, 1.9, 2.36, 'bone', casino.D.small, 'y');
   casino.cylinder(props, 'Whiskey', 34.5, 16.87, 20.4, 1.6, 1.42, 'brass', casino.D.small, 'y');
 

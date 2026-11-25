@@ -17,7 +17,7 @@ const path = require('path');
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const SPEED = Number(process.env.SPEED) || 1;
-const TURN_MS = (Number(process.env.TURN_SECONDS) || 90) * 1000;
+const TURN_MS = Math.min(20, Number(process.env.TURN_SECONDS) || 20) * 1000;   // 20 s cap: a turn is a beat, not a sit
 const MAX_SPIN_MS = 10_000;
 const MAX_LIVES = 3, MIN_PLAYERS = 3, MAX_PLAYERS = 12;
 const PUBLIC = __dirname;
@@ -262,6 +262,7 @@ function afterElimination(room) {
   nextHolder(room, randomAlive(room));
 }
 
+// Out of time is not a death: the gun is handed to the nearest living neighbour.
 function timeoutPlayer(room) {
   const i = room.active, s = room.seats[i];
   if (!s || s.dead || !DECISION.includes(room.phase)) return;
@@ -269,11 +270,12 @@ function timeoutPlayer(room) {
     clearTimeout(room.spinTimer);
     room.spinTimer = null;
   }
-  s.lives = 0; s.dead = true;
-  ev(room, { e: 'timeout', who: i });
-  room.phase = 'RESOLVING'; room.target = null; room.neighbors = null;
-  change(room);
-  later(room, () => afterElimination(room), 1300);
+  const nb = neighborsOf(room, i);
+  const cands = [nb.left, nb.right].filter(j => j >= 0 && j !== i && !room.seats[j].dead);
+  if (!cands.length) { room.phase = 'IDLE'; change(room); return; }
+  const to = cands[Math.floor(Math.random() * cands.length)];
+  ev(room, { e: 'timeout', who: i, to });
+  nextHolder(room, to);
 }
 
 function doSpin(room) {

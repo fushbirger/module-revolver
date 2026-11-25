@@ -271,7 +271,7 @@ export function createGun(scene) {
   const root = new THREE.Group();
   root.name = 'Fortuna Twin-chamber Revolver';
   const model = cloneModel('twin_chamber_revolver');
-  model.scale.setScalar(BLOCKBENCH_SCALE);
+  model.scale.setScalar(BLOCKBENCH_SCALE * 1.25);   // an 8 m table swallows a life-size revolver
   model.traverse(object => {
     if (!object.isMesh) return;
     object.castShadow = true;

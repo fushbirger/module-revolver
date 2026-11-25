@@ -363,11 +363,11 @@ function buildSeats(n) {
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.root.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.root.quaternion);
     machine.root.position.copy(player.root.position)
-      .addScaledVector(forward, ringRadius - clockRadius - 0.9)
+      .addScaledVector(forward, ringRadius - clockRadius - 0.5)
       .addScaledVector(right, 0.32);
     machine.root.position.y = TABLE_Y + 0.03;
     machine.root.rotation.y = player.root.rotation.y;  // dial faces the seat
-    machine.root.scale.multiplyScalar(0.72);
+    machine.root.scale.multiplyScalar(0.95);
     return machine;
   });
   camSpread = ringRadius + 0.9;
@@ -746,7 +746,7 @@ function onEvent(m) {
     else hold(`BANG! ${nm(m.target)} DROPS TO ${m.lives} ${m.lives === 1 ? 'LIFE' : 'LIVES'}`, 1500);
   } else if (m.e === 'timeout') {
     playTone(115, .35, 'triangle', .18, 45);
-    burst(m.who); hold(`${nm(m.who)} DID NOT RESPOND — REMOVED`, 2200);
+    hold(`${nm(m.who)} RAN OUT OF TIME — THE GUN GOES TO ${nm(m.to)}`, 2200);
   } else if (m.e === 'sudden') {
     casinoSurge = 1.4;
     playTone(260, .55, 'sawtooth', .12, 70);

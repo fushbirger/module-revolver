@@ -20,8 +20,10 @@ Optional server settings:
 
 ```bash
 SPEED=10 node server.js          # faster server timing for testing
-TURN_SECONDS=20 node server.js  # shorter inactivity limit
+TURN_SECONDS=15 node server.js   # shorten the 20 s turn cap (it cannot be raised)
 ```
+
+A turn is capped at 20 seconds. Running out of time is not a death: the gun is handed to the nearest living neighbour, who then plays out their own turn.
 
 ## Run in StackBlitz
 
