@@ -264,6 +264,10 @@ function afterElimination(room) {
 function timeoutPlayer(room) {
   const i = room.active, s = room.seats[i];
   if (!s || s.dead || !DECISION.includes(room.phase)) return;
+  if (room.phase === 'SPINNING') {
+    clearTimeout(room.spinTimer);
+    room.spinTimer = null;
+  }
   s.lives = 0; s.dead = true;
   ev(room, { e: 'timeout', who: i });
   room.phase = 'RESOLVING'; room.target = null; room.neighbors = null;
@@ -437,6 +441,7 @@ const handlers = {
     room.seats.forEach(s => { s.lives = MAX_LIVES; s.dead = false; });
     Object.assign(room, { phase: 'LOBBY', active: -1, target: null, neighbors: null, hover: null, winner: -1, finalTwo: false });
     reindex(room);
+    ensureHost(room);
   }
 };
 

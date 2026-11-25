@@ -669,17 +669,19 @@ function statusText() {
   const me = S.you >= 0 && S.you === S.active;
   let t = '';
   switch (S.phase) {
-    case 'IDLE':      t = me ? 'YOUR TURN — PRESS START' : `${a.name}'S TURN`; break;
-    case 'SPINNING':  t = me ? 'SPINNING... PRESS STOP' : `${a.name} IS SPINNING...`; break;
+    case 'IDLE':      t = me ? 'YOUR TURN — PRESS START' : `${a?.name || 'PLAYER'}'S TURN`; break;
+    case 'SPINNING':  t = me ? 'SPINNING... PRESS STOP' : `${a?.name || 'PLAYER'} IS SPINNING...`; break;
     case 'SETTLING':  t = 'THE WHEEL SLOWS...'; break;
-    case 'SELECTING': t = me ? 'WHO DO YOU SHOOT? CLICK A PLAYER OR YOURSELF' : `${a.name} IS CHOOSING A TARGET...`; break;
-    case 'AIMING':    t = S.target === S.active ? `${a.name} AIMS AT THEMSELVES...` : `${a.name} AIMS AT ${P[S.target].name}...`; break;
+    case 'SELECTING': t = me ? 'WHO DO YOU SHOOT? CLICK A PLAYER OR YOURSELF' : `${a?.name || 'PLAYER'} IS CHOOSING A TARGET...`; break;
+    case 'AIMING':    t = S.target === S.active ? `${a?.name || 'PLAYER'} AIMS AT THEMSELVES...` : `${a?.name || 'PLAYER'} AIMS AT ${P[S.target]?.name || 'PLAYER'}...`; break;
     case 'NEIGHBOR': {
       const nb = S.neighbors;
-      t = me ? `PASS THE GUN: LEFT = ${P[nb.left].name}, RIGHT = ${P[nb.right].name}` : `${a.name} CHOOSES WHO GETS THE GUN...`;
+      t = me
+        ? `PASS THE GUN: LEFT = ${P[nb?.left]?.name || 'PLAYER'}, RIGHT = ${P[nb?.right]?.name || 'PLAYER'}`
+        : `${a?.name || 'PLAYER'} CHOOSES WHO GETS THE GUN...`;
       break;
     }
-    case 'GAME_OVER': t = S.winner >= 0 ? `${P[S.winner].name} WINS THE TABLE!` : 'NOBODY WINS'; break;
+    case 'GAME_OVER': t = S.winner >= 0 ? `${P[S.winner]?.name || 'PLAYER'} WINS THE TABLE!` : 'NOBODY WINS'; break;
     default: t = '';
   }
   if (S.timeLeft !== null && ['IDLE', 'SPINNING', 'SELECTING', 'NEIGHBOR'].includes(S.phase)) {
