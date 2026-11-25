@@ -23,6 +23,16 @@ SPEED=10 node server.js          # faster server timing for testing
 TURN_SECONDS=20 node server.js  # shorter inactivity limit
 ```
 
+## Run in StackBlitz
+
+Use the **Server** template (not a browser-only static template) and run:
+
+```bash
+npm start
+```
+
+The server listens on `0.0.0.0`, so StackBlitz can expose both its HTTP and WebSocket ports. Open the preview from the terminal or StackBlitz port panel.
+
 Spins automatically stop after 10 seconds, so a player cannot keep the wheel spinning indefinitely.
 
 The browser loads Three.js r160 from jsDelivr, so an internet connection is required.

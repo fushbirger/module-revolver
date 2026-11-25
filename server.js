@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 const SPEED = Number(process.env.SPEED) || 1;
 const TURN_MS = (Number(process.env.TURN_SECONDS) || 90) * 1000;
 const MAX_SPIN_MS = 10_000;
@@ -23,6 +24,7 @@ const PUBLIC = __dirname;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png',
+  '.bbmodel': 'application/json', '.glb': 'model/gltf-binary',
   '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav'
 };
 
@@ -470,8 +472,8 @@ function onClose(c) {
   }
 }
 
-server.listen(PORT, () => {
-  console.log(`Roulette table running: http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Roulette table running: http://${HOST}:${PORT}`);
   console.log(`  speed x${SPEED}, inactivity limit ${TURN_MS / 1000}s`);
   console.log(`  maximum spin ${MAX_SPIN_MS / 1000}s`);
   console.log('  quick test: open /?quick=3 (you + 3 bots, auto-start)');
