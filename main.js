@@ -1,9 +1,4 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mk, preloadBlockbenchAssets, createEnvironment, createGun, createMachine, createMafiaPlayer, PLAYER_SCALE } from './models.js';
 
 await preloadBlockbenchAssets();
@@ -25,7 +20,6 @@ let S = { phase: 'PARTIES', players: [], active: -1, target: null, neighbors: nu
 let stateAt = performance.now();
 let hoverLocal = null, hoverRemote = null;
 let parties = [], lobbyError = '';
-let dreamPulse = 0;
 
 const params = new URLSearchParams(location.search);
 const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> create a test party, add bots, start
@@ -76,80 +70,13 @@ let cameraRoll = 0;
 camera.position.copy(baseCamPos);
 camera.lookAt(LOOK);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.34;
 document.body.appendChild(renderer.domElement);
-
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-composer.addPass(new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.68,
-  0.62,
-  0.64
-));
-const dreamPass = new ShaderPass({
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uIntensity: { value: 0.62 },
-    uPulse: { value: 0 },
-    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
-  },
-  vertexShader: `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform sampler2D tDiffuse;
-    uniform float uTime;
-    uniform float uIntensity;
-    uniform float uPulse;
-    uniform vec2 uResolution;
-    varying vec2 vUv;
-
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7)) + floor(uTime * 8.0)) * 43758.5453);
-    }
-
-    void main() {
-      vec2 centered = vUv - 0.5;
-      float radius = length(centered);
-      float undertow = sin(vUv.y * 7.0 + uTime * 0.31
-        + sin(vUv.x * 4.0 - uTime * 0.19));
-      float breathing = sin(uTime * 0.27 + radius * 7.0) * 0.0045 * uIntensity;
-      vec2 warpedUv = vUv + centered * breathing
-        + vec2(undertow, -undertow * 0.55) * (0.0025 * uIntensity + 0.009 * uPulse);
-      vec2 direction = normalize(centered + vec2(0.0001));
-      float aberration = (0.0015 + 0.003 * uIntensity + 0.012 * uPulse)
-        * smoothstep(0.08, 0.72, radius);
-      vec3 color;
-      color.r = texture2D(tDiffuse, warpedUv + direction * aberration).r;
-      color.g = texture2D(tDiffuse, warpedUv).g;
-      color.b = texture2D(tDiffuse, warpedUv - direction * aberration).b;
-      float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luminance), color, 0.92);
-      color = max(vec3(0.0), (color - 0.008) * 1.08);
-      color *= vec3(1.02, 0.96, 0.94);
-      color += (1.0 - smoothstep(0.04, 0.46, luminance))
-        * vec3(0.024, 0.003, 0.012) * (0.5 + uIntensity * 0.35);
-      float vignette = 1.0 - smoothstep(0.28, 0.78, radius);
-      color *= 0.86 + vignette * 0.14;
-      float grain = hash(floor(vUv * uResolution * 0.55)) - 0.5;
-      color += grain * (0.008 + 0.006 * uIntensity);
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `
-});
-composer.addPass(dreamPass);
-composer.addPass(new OutputPass());
 
 function updateResponsiveCamera() {
   const aspect = window.innerWidth / window.innerHeight;
@@ -174,12 +101,9 @@ function updateResponsiveCamera() {
   if (viewer) camera.lookAt(GUN_X, viewer.root.position.y + 0.78 * PLAYER_SCALE, GUN_Z);
   else camera.lookAt(LOOK);
   cameraRoll = 0;
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setPixelRatio(pixelRatio);
-  composer.setSize(window.innerWidth, window.innerHeight);
-  dreamPass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
 }
 updateResponsiveCamera();
 window.addEventListener('resize', updateResponsiveCamera);
@@ -188,34 +112,13 @@ const spot = new THREE.SpotLight(0xffd27a, 360, 20, Math.PI / 5, 0.2, 1.05);
 spot.position.set(0.0, 6.2, 1.2);
 spot.target.position.set(0, 0.2, -0.3);
 spot.castShadow = true;
-const goldSpot = new THREE.SpotLight(0xffb944, 180, 19, Math.PI / 4.5, 0.38, 1.15);
-goldSpot.position.set(5.2, 5.2, 1.8);
-goldSpot.target.position.set(0, 0.3, -0.6);
 const rim = new THREE.PointLight(0xb20d25, 52, 15, 1.8);
 rim.position.set(0, 2.7, -6.2);
-const backFill = new THREE.PointLight(0x78818b, 24, 14, 2);
-backFill.position.set(-5.2, 3.8, -3.8);
 const warmFill = new THREE.PointLight(0xffca70, 24, 11, 1.8);
 warmFill.position.set(4.8, 3.2, 1.4);
-const magentaWash = new THREE.PointLight(0xff174f, 32, 13, 1.7);
-magentaWash.position.set(-4.4, 2.6, -3.2);
-const blueWash = new THREE.PointLight(0x426bff, 24, 12, 1.8);
-blueWash.position.set(4.6, 2.8, -4.1);
-const coldRim = new THREE.SpotLight(0x9aa9bd, 84, 15, Math.PI / 6, 0.18, 1.15);
-coldRim.position.set(-5.2, 4.2, -3.8);
-coldRim.target.position.set(0, 0.8, 0);
-coldRim.castShadow = true;
-const pendantLights = [-3, -1.125, 1.125, 3].map(x => {
-  const light = new THREE.PointLight(0xffc15c, 28, 8.5, 1.8);
-  light.position.set(x, 4.45, -2.125);
-  return light;
-});
-const signGlow = new THREE.PointLight(0xd10d2c, 24, 10, 1.7);
-signGlow.position.set(0, 3.6, -7.4);
 scene.add(
   new THREE.HemisphereLight(0x9ba5b3, 0x171014, 0.32),
-  spot, spot.target, goldSpot, goldSpot.target, rim, backFill, warmFill,
-  magentaWash, blueWash, coldRim, coldRim.target, ...pendantLights, signGlow
+  spot, spot.target, rim, warmFill
 );
 
 const environment = createEnvironment(scene);
@@ -224,26 +127,6 @@ const lettering = sign?.getObjectByName('FORTUNA lettering');
 if (!sign || !lettering?.isMesh) throw new Error('Casino environment is missing its Fortuna marquee');
 lettering.material.emissive.setHex(0xffbd36);
 lettering.material.emissiveIntensity = 2.4;
-const marqueeBulbs = [];
-const marqueeBulbGeometry = new THREE.SphereGeometry(0.9, 10, 8);
-const addMarqueeBulb = (x, y, index) => {
-  const color = new THREE.Color(index % 4 === 0 ? 0xff3655 : 0xffdf8a);
-  const material = new THREE.MeshBasicMaterial({ color });
-  const bulb = new THREE.Mesh(marqueeBulbGeometry, material);
-  bulb.position.set(x, y, -136.6);
-  sign.add(bulb);
-  marqueeBulbs.push({ material, color, index });
-};
-for (let index = 0; index < 12; index++) {
-  const x = -34 + index * (68 / 11);
-  addMarqueeBulb(x, 94, index);
-  addMarqueeBulb(x, 74, index + 12);
-}
-for (let index = 0; index < 4; index++) {
-  const y = 77 + index * (14 / 3);
-  addMarqueeBulb(-38, y, index + 24);
-  addMarqueeBulb(38, y, index + 28);
-}
 const gun = createGun(scene);
 
 // shared confetti resources
@@ -254,10 +137,8 @@ const confetti = [];
 
 function clearSeats() {
   const disposeObject = (root) => {
-    const geometries = new Set();
     const materials = new Set();
     root.traverse(object => {
-      if (object.geometry) geometries.add(object.geometry);
       if (object.material) {
         for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
           materials.add(material);
@@ -265,7 +146,6 @@ function clearSeats() {
       }
     });
     scene.remove(root);
-    geometries.forEach(geometry => geometry.dispose());
     materials.forEach(material => material.dispose());
   };
   players.forEach(p => disposeObject(p.root));
@@ -622,7 +502,7 @@ let shake = 0, finalFlash = 0, casinoSurge = 0;
 function burst(i) {
   const p = players[i]; if (!p) return;
   const pos = p.head.getWorldPosition(new THREE.Vector3());
-  for (let k = 0; k < 100; k++) {
+  for (let k = 0; k < 40; k++) {
     const m = mk(confettiGeo, confettiMats[k % 5], pos.x, pos.y, pos.z, 0, 0, 0, false);
     scene.add(m);
     confetti.push({ m, v: new THREE.Vector3((Math.random() - 0.5) * 5, 2 + Math.random() * 4, (Math.random() - 0.5) * 5) });
@@ -631,13 +511,11 @@ function burst(i) {
 function onEvent(m) {
   const nm = (i) => (S.players[i] ? S.players[i].name : '?');
   if (m.e === 'blank') {
-    dreamPulse = Math.max(dreamPulse, 0.38);
     casinoSurge = Math.max(casinoSurge, 0.35);
     playDryClick();
     lamp(0x3b6e6c, 1000);
     hold(m.target === m.by ? `*CLICK* — BLANK! ${nm(m.by)} GOES AGAIN` : `*CLICK* — BLANK! ${nm(m.target)} TAKES THE GUN`, 1600);
   } else if (m.e === 'shot') {
-    dreamPulse = 1;
     casinoSurge = Math.max(casinoSurge, 0.9);
     playGunshot();
     if (Number.isInteger(m.lives) && players[m.target]) {
@@ -652,7 +530,6 @@ function onEvent(m) {
     playTone(115, .35, 'triangle', .18, 45);
     burst(m.who); hold(`${nm(m.who)} DID NOT RESPOND — REMOVED`, 2200);
   } else if (m.e === 'sudden') {
-    dreamPulse = Math.max(dreamPulse, 0.8);
     casinoSurge = 1.4;
     playTone(260, .55, 'sawtooth', .12, 70);
     setTimeout(() => playTone(520, .32, 'sine', .09, 330), 180);
@@ -774,23 +651,6 @@ function animate() {
   const now = performance.now();
   const ph = S.phase;
   const spinning = ph === 'SPINNING';
-  const phaseIntensity = ph === 'SPINNING' ? 1
-    : ph === 'AIMING' || ph === 'RESOLVING' ? 0.9
-      : ph === 'SETTLING' ? 0.82 : 0.62;
-  dreamPass.uniforms.uTime.value = t;
-  dreamPass.uniforms.uIntensity.value +=
-    (phaseIntensity - dreamPass.uniforms.uIntensity.value) * Math.min(1, 2.8 * dt);
-  const ambientDream = 0.06 + (Math.sin(t * 0.55) + 1) * 0.025;
-  dreamPass.uniforms.uPulse.value = Math.max(dreamPulse, ambientDream);
-  dreamPulse *= Math.pow(0.035, dt);
-  marqueeBulbs.forEach(({ material, color, index }) => {
-    const chasePosition = (t * 8) % marqueeBulbs.length;
-    const chaseDistance = Math.abs(index - chasePosition);
-    const wrappedDistance = Math.min(chaseDistance, marqueeBulbs.length - chaseDistance);
-    const chase = Math.max(0, 1 - wrappedDistance / 4);
-    const shimmer = 0.68 + (Math.sin(t * 5 + index * 0.85) + 1) * 0.12 + chase * 0.62;
-    material.color.copy(color).multiplyScalar(shimmer);
-  });
 
   // The active player holds the imported weapon and tracks the selected or hovered target.
   const hi = mySelecting() ? hoverLocal : ((ph === 'SELECTING' || ph === 'NEIGHBOR') ? hoverRemote : null);
@@ -882,22 +742,11 @@ function animate() {
   casinoSurge *= Math.pow(0.08, dt);
   const spinBeat = spinning ? (Math.sin(t * 4.6) + 1) * 0.5 : 0;
   spot.intensity = 360 * (0.96 + Math.sin(t * 0.27) * 0.025) + casinoSurge * 120;
-  goldSpot.intensity = 180 * (0.94 + Math.sin(t * 0.23 + 1.1) * 0.04)
-    + spinBeat * 90 + casinoSurge * 75;
-  goldSpot.target.position.x = Math.sin(t * 0.42) * (0.8 + spinBeat * 1.8);
-  coldRim.intensity = 84 * (0.94 + Math.sin(t * 0.19 + 1.3) * 0.06);
-  magentaWash.intensity = 32 + spinBeat * 34 + casinoSurge * 38;
-  blueWash.intensity = 24 + (1 - spinBeat) * 12 + casinoSurge * 28;
-  pendantLights.forEach((light, index) => {
-    light.intensity = 28 * (0.96 + Math.sin(t * 0.42 + index * 0.8) * 0.025)
-      + spinBeat * 12 + casinoSurge * 10;
-  });
-  signGlow.intensity = 24 + spinBeat * 30 + casinoSurge * 48;
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0x3b8c5a : 0x8f7a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
     lampHex = Math.sin(t * 50) > 0 ? 0xff1e27 : 0x111111;
-    rim.intensity = 24 + finalFlash * 60;
+    rim.intensity = 24 + finalFlash * 60 + spinBeat * 34 + casinoSurge * 34;
     finalFlash *= Math.pow(0.08, dt);
   } else rim.intensity = 44 + Math.sin(t * 0.32) * 4 + spinBeat * 34 + casinoSurge * 34;
   machines.forEach((machine, index) => {
@@ -938,6 +787,6 @@ function animate() {
   uiEl.style.left = `${Math.max(10, Math.min(window.innerWidth - 90, (kp.x * 0.5 + 0.5) * window.innerWidth))}px`;
   uiEl.style.top  = `${Math.max(85, Math.min(window.innerHeight - 85, (-kp.y * 0.5 + 0.5) * window.innerHeight))}px`;
 
-  composer.render();
+  renderer.render(scene, camera);
 }
 animate();

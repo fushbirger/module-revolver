@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const MODEL_PATH = new URL('./assets/blockbench/', import.meta.url);
 const modelTemplates = new Map();
 const textureCache = new Map();
 const BLOCKBENCH_SCALE = 1 / 16;
+const eyeGeometry = new THREE.SphereGeometry(0.018, 10, 8);
+const noseGeometry = new THREE.ConeGeometry(0.022, 0.068, 5);
 export const PLAYER_SCALE = 3.2;
 
 export function mk(geometry, material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, cast = true) {
@@ -269,13 +270,11 @@ export async function preloadBlockbenchAssets() {
   const assets = [
     ['casino_environment', 'casino_environment.bbmodel'],
     ['seated_mafioso', 'seated_mafioso.bbmodel'],
-    ['chess_clock_monitor', 'chess_clock_monitor.bbmodel']
+    ['chess_clock_monitor', 'chess_clock_monitor.bbmodel'],
+    ['twin_chamber_revolver', 'twin_chamber_revolver.bbmodel']
   ];
   const loaded = await Promise.all(assets.map(async ([key, filename]) => [key, await loadProject(filename)]));
   loaded.forEach(([key, model]) => modelTemplates.set(key, model));
-
-  const gunAsset = await new GLTFLoader().loadAsync(new URL('iron_phantom.glb', MODEL_PATH).href);
-  modelTemplates.set('iron_phantom', gunAsset.scene);
 }
 
 function cloneModel(key) {
@@ -325,17 +324,11 @@ export function createEnvironment(scene) {
 
 export function createGun(scene) {
   const root = new THREE.Group();
-  root.name = 'Iron Phantom';
-  const model = cloneModel('iron_phantom');
-  model.rotation.y = Math.PI / 2;
-  model.scale.setScalar(0.36);
+  root.name = 'Fortuna Twin-chamber Revolver';
+  const model = cloneModel('twin_chamber_revolver');
+  model.scale.setScalar(BLOCKBENCH_SCALE * 0.55);
   model.traverse(object => {
     if (!object.isMesh) return;
-    object.material = new THREE.MeshStandardMaterial({
-      color: 0x626568,
-      metalness: 0.72,
-      roughness: 0.56
-    });
     object.castShadow = true;
     object.receiveShadow = true;
   });
@@ -400,7 +393,6 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
     emissiveIntensity: 0.16,
     roughness: 0.36
   });
-  const eyeGeometry = new THREE.SphereGeometry(0.018, 10, 8);
   const eyes = [-1.35, 1.35].map(x => {
     const eye = mk(eyeGeometry, eyeMaterial, x / 16, 0.055, 0.205, 0, 0, 0, false);
     eye.scale.set(1, 0.7, 0.42);
@@ -409,7 +401,7 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
     return eye;
   });
   head.add(mk(
-    new THREE.ConeGeometry(0.022, 0.068, 5),
+    noseGeometry,
     new THREE.MeshStandardMaterial({ color: 0x35231f, roughness: 0.95 }),
     0, 0, 0.224, Math.PI / 2, 0, 0, false
   ));

@@ -39,17 +39,17 @@ The browser loads Three.js r160 from jsDelivr, so an internet connection is requ
 
 ## Updated scene models
 
-- `assets/blockbench/` contains editable Blockbench projects for the casino environment and veneer table, seated trenchcoat silhouettes and chairs, and chess-clock life monitor. The in-game weapon uses the supplied `iron_phantom.glb`; the shared, desaturated atlas gives the Blockbench assets hard-worn treatments: pitted oxide steel, abraded gunmetal, scratched walnut, bruised velvet, cracked concrete, and blood-dark enamel.
-- `models.js` loads the GLB and Blockbench assets, scales seated players to at least 3× their previous size, and positions the imported weapon in the holder's hand.
+- `assets/blockbench/` contains editable low-poly Blockbench projects for the casino environment, veneer table, seated trenchcoat silhouettes and chairs, chess-clock life monitor, and twin-chamber revolver. A shared, desaturated atlas gives the models hard-worn treatments: pitted oxide steel, abraded gunmetal, scratched walnut, bruised velvet, cracked concrete, and blood-dark enamel.
+- `models.js` loads the Blockbench assets, scales seated players to at least 3× their previous size, and positions the revolver in the holder's hand.
 - `scripts/build_blockbench_assets.mjs` regenerates the Blockbench projects and texture atlas with continuous UVs across round surfaces, so the veneer reads as a single tabletop rather than repeated wedges.
-- `main.js` gives each player a three-needle life clock, removes one needle immediately on a hit, and lets the active player click another player's body or use the lower-center self-shot button. Targeting falls back to nearby head/torso screen positions when a click misses a model mesh; rejected targets are reported without advancing the turn. It also animates self-aiming and hit reactions, spaces oversized seats, moves the room behind the table, and uses a chasing red-and-gold marquee, theatrical gold spotlights, crimson and blue washes, and bold bloom for a high-stakes atmosphere.
+- `main.js` gives each player a three-needle life clock, removes one needle immediately on a hit, and lets the active player click another player's body or use the lower-center self-shot button. Targeting falls back to nearby head/torso screen positions when a click misses a model mesh; rejected targets are reported without advancing the turn. It also animates self-aiming and hit reactions, spaces oversized seats, moves the room behind the table, and uses a compact gold key light with a red rim light.
 - `index.html` is the game entry point.
 
-The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed; lens distortion and grain intensify during spins, aiming, and shots.
+The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed, and the scene renders directly without post-processing to reduce GPU load.
 
 ## Validation
 
-The JavaScript files pass Node syntax checks, and the Three.js post-processing module URLs were checked. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
+The JavaScript files pass Node syntax checks. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
 
 ## Blockbench 3D editor
 
