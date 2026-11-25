@@ -6,6 +6,9 @@
   <title>2-Chamber Roulette</title>
   <style>
     body { margin: 0; overflow: hidden; background: radial-gradient(circle at 50% 40%, #24191b 0, #100e11 58%, #070609 100%); font-family: Georgia, "Times New Roman", serif; color: #ddd4c2; user-select: none; }
+    #bootStatus { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; gap: 12px; padding: 24px; background: #09090b; color: #ddd4c2; text-align: center; overflow-wrap: anywhere; }
+    #bootStatus[hidden] { display: none; }
+    #bootError { max-width: min(720px, 90vw); color: #ff9a8f; font: 13px/1.5 monospace; white-space: pre-wrap; text-align: left; }
     body::after {
       content: "";
       position: fixed;
@@ -68,7 +71,28 @@
   </script>
 </head>
 <body>
-  <script type="module" src="./main.js"></script>
+  <div id="bootStatus" role="status">
+    <div>LOADING ROULETTE TABLE…</div>
+    <div id="bootError" role="alert" hidden></div>
+  </div>
+  <script type="module">
+    const bootStatus = document.getElementById('bootStatus');
+    const bootError = document.getElementById('bootError');
+    const showBootError = (reason) => {
+      bootStatus.hidden = false;
+      bootError.hidden = false;
+      bootError.textContent = reason?.stack || reason?.message || String(reason);
+    };
+
+    window.addEventListener('error', (event) => {
+      if (event.error || event.message) showBootError(event.error || event.message);
+    });
+    window.addEventListener('unhandledrejection', (event) => showBootError(event.reason));
+
+    import('./main.js')
+      .then(() => { bootStatus.hidden = true; })
+      .catch(showBootError);
+  </script>
 </body>
 </html>
 
