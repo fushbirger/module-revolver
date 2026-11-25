@@ -89,8 +89,10 @@ const VIEW_YAW_LIMIT = 1.15, VIEW_PITCH_MIN = -0.5, VIEW_PITCH_MAX = 0.55;
 const view = { yaw: 0, pitch: 0, yawTarget: 0, pitchTarget: 0 };
 const viewEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const viewQuat = new THREE.Quaternion();
+let hasLooked = false;
 function resetView() { view.yaw = view.pitch = view.yawTarget = view.pitchTarget = 0; }
 function nudgeView(yaw, pitch) {
+  if (yaw || pitch) hasLooked = true;
   view.yawTarget = THREE.MathUtils.clamp(view.yawTarget + yaw, -VIEW_YAW_LIMIT, VIEW_YAW_LIMIT);
   view.pitchTarget = THREE.MathUtils.clamp(view.pitchTarget + pitch, VIEW_PITCH_MIN, VIEW_PITCH_MAX);
 }
@@ -781,7 +783,10 @@ function statusText() {
     const left = Math.max(0, S.timeLeft - (performance.now() - stateAt));
     const s = Math.ceil(left / 1000);
     t += `  [${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}]`;
+    if (me && left <= 10000) t = `HURRY — ${t}`;
   }
+  // Opponents sit at the edges of a table this wide; say so until the player has turned once.
+  if (me && !hasLooked && (S.phase === 'SELECTING' || S.phase === 'NEIGHBOR')) t += '   —   DRAG TO LOOK AROUND';
   return t;
 }
 
