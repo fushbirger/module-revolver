@@ -331,14 +331,30 @@ function generateMarquee(style, width, height) {
   return albedo;
 }
 
-function gradeAtlasAlbedo(albedo) {
+function gradeAtlasAlbedo(albedo, width) {
   // Bake the desaturated ULTRAKILL palette into the texture so the material look
-  // survives without the post-process grade. Post keeps a light pass only.
+  // survives without the post-process grade, then let it drift: a slow hue bleed
+  // and a melt wave so the surfaces read like something seen through a migraine.
   const CHROMA = 0.36;
   const CONTRAST = 1.12;
   const toSrgb = value => Math.round(Math.min(1, Math.max(0, value)) * 255);
   for (let i = 0; i < albedo.length; i += 3) {
-    const r = albedo[i] / 255, g = albedo[i + 1] / 255, b = albedo[i + 2] / 255;
+    const pixel = i / 3;
+    const px = pixel % width, py = Math.floor(pixel / width);
+    let r = albedo[i] / 255, g = albedo[i + 1] / 255, b = albedo[i + 2] / 255;
+    const wave = Math.sin(px * 0.09 + py * 0.05) * 0.6 + Math.sin(px * 0.031 - py * 0.077) * 0.4;
+    const bleed = 0.12 * wave;
+    const alt = [b, r, g];
+    const drift = 0.12 * Math.sin(px * 0.03 + py * 0.02);
+    const bled = [
+      r + (b - r) * bleed + (alt[0] - r) * drift,
+      g + (r - g) * bleed * 0.7 + (alt[1] - g) * drift,
+      b + (g - b) * bleed * 0.9 + (alt[2] - b) * drift
+    ];
+    const melt = 1 + Math.sin(py * 0.21 + Math.sin(px * 0.06) * 1.7) * 0.05;
+    r = Math.min(1, Math.max(0, bled[0] * melt));
+    g = Math.min(1, Math.max(0, bled[1] * melt));
+    b = Math.min(1, Math.max(0, bled[2] * melt));
     const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const shape = value => (value - 0.5) * CONTRAST + 0.5;
     const grain = ((Math.sin((i * 12.9898) % 6.283) * 43758.5453) % 1) * 3;
@@ -392,7 +408,7 @@ function buildAtlas(style) {
     }
   }
 
-  gradeAtlasAlbedo(albedo);
+  gradeAtlasAlbedo(albedo, width);
   return { tile, width, height, albedo, roughness, metalness, normal };
 }
 
@@ -1057,23 +1073,25 @@ async function buildModels(style, atlas) {
   casino.cylinder(table, 'Suede playing field', 0, 13.74, 0, 14, 0.2, 'velvet', casino.D.segments, 'y');
   casino.torus(table, 'Inner pinstripe', 0, 13.84, 0, 14.1, 0.1, 'brass', casino.D.segments, 4);
 
+  // Props are authored at their final size for the 3x table: 3x out from the centre,
+  // 1.18x up (the table lift) and 1.6x across, so chips stay discs instead of plates.
   const props = casino.group('Table Props');
   const chipColors = ['blood', 'bone', 'brass', 'enamel'];
   for (let i = 0; i < 5; i++) {
-    casino.cylinder(props, 'Casino chip', 12, 13.9 + i * 0.3, 4.5, 1.1, 0.26, chipColors[i % 4], casino.D.small, 'y');
+    casino.cylinder(props, 'Casino chip', 36, 16.55 + i * 0.35, 13.5, 1.76, 0.31, chipColors[i % 4], casino.D.small, 'y');
   }
   for (let i = 0; i < 4; i++) {
-    casino.cylinder(props, 'Casino chip', -12.5, 13.9 + i * 0.3, -4, 1.1, 0.26, chipColors[(i + 2) % 4], casino.D.small, 'y');
+    casino.cylinder(props, 'Casino chip', -37.5, 16.55 + i * 0.35, -12, 1.76, 0.31, chipColors[(i + 2) % 4], casino.D.small, 'y');
   }
   for (let i = 0; i < 3; i++) {
-    casino.addCube(props, 'Playing card', [10.2, 13.76 + i * 0.05, -5.4], [12.4, 13.79 + i * 0.05, -3.2], 'bone', [0, (i - 1) * 9, 0]);
+    casino.addCube(props, 'Playing card', [30.6, 16.25 + i * 0.06, -16.2], [37.2, 16.29 + i * 0.06, -9.6], 'bone', [0, (i - 1) * 9, 0]);
   }
-  casino.cylinder(props, 'Ashtray', -11.5, 14.05, 6.5, 2.2, 0.7, 'steel', casino.D.small, 'y');
-  casino.cylinder(props, 'Ashtray well', -11.5, 14.3, 6.5, 1.5, 0.3, 'enamel', casino.D.small, 'y');
-  casino.cylinder(props, 'Cigar', -11.5, 14.55, 6.5, 0.45, 3.2, 'leather', casino.D.tiny, 'x');
-  casino.cylinder(props, 'Cigar ember', -9.95, 14.55, 6.5, 0.42, 0.25, 'blood', casino.D.tiny, 'x');
-  casino.cylinder(props, 'Whiskey glass', 11.5, 14.8, 6.8, 1.2, 2.0, 'bone', casino.D.small, 'y');
-  casino.cylinder(props, 'Whiskey', 11.5, 14.3, 6.8, 1.0, 1.2, 'brass', casino.D.small, 'y');
+  casino.cylinder(props, 'Ashtray', -34.5, 16.58, 19.5, 3.5, 0.83, 'steel', casino.D.small, 'y');
+  casino.cylinder(props, 'Ashtray well', -34.5, 16.87, 19.5, 2.4, 0.35, 'enamel', casino.D.small, 'y');
+  casino.cylinder(props, 'Cigar', -34.5, 17.17, 19.5, 0.7, 3.8, 'leather', casino.D.tiny, 'x');
+  casino.cylinder(props, 'Cigar ember', -32.5, 17.17, 19.5, 0.66, 0.3, 'blood', casino.D.tiny, 'x');
+  casino.cylinder(props, 'Whiskey glass', 34.5, 17.46, 20.4, 1.9, 2.36, 'bone', casino.D.small, 'y');
+  casino.cylinder(props, 'Whiskey', 34.5, 16.87, 20.4, 1.6, 1.42, 'brass', casino.D.small, 'y');
 
   await casino.save(`casino_environment_${style}.bbmodel`);
 

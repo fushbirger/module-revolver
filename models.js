@@ -227,6 +227,18 @@ function cloneModel(key) {
   return template.clone(true);
 }
 
+// A whisper of self-illumination from the albedo so a figure sitting 8 m from the
+// pendant still reads as a silhouette instead of a hole in the frame.
+function liftFromBlack(root, color = 0x4a423a, intensity = 0.9) {
+  root.traverse(object => {
+    if (!object.isMesh || !object.material || !object.material.map) return;
+    object.material.emissiveMap = object.material.map;
+    object.material.emissive = new THREE.Color(color);
+    object.material.emissiveIntensity = intensity;
+    object.material.needsUpdate = true;
+  });
+}
+
 function cloneMaterials(root) {
   root.traverse(object => {
     if (!object.isMesh) return;
@@ -302,6 +314,7 @@ export function createMachine(scene) {
 export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   const root = cloneModel('seated_mafioso');
   cloneMaterials(root);
+  liftFromBlack(root);
   root.position.set(x, y, z);
   root.rotation.y = rotY;
   root.scale.setScalar(BLOCKBENCH_SCALE);
