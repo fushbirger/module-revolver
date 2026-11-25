@@ -166,6 +166,10 @@ spot.shadow.normalBias = 0.022;
 const spill = new THREE.SpotLight(0xffd7a6, 46, 11, Math.PI / 2.2, 0.9, 1.6);
 spill.position.copy(spot.position);
 spill.target.position.set(0, 1.0, 0);
+// The felt throws the lamp back up at the faces of everyone seated round it. Without
+// this the players are holes in the frame at 8 m; with it they read like the reference.
+const bounce = new THREE.PointLight(0xff9c62, 58, 13, 1.6);
+bounce.position.set(0, 0.62, 0);
 const rim = new THREE.PointLight(0x9c1119, 150, 16, 2.0);
 rim.position.set(0, 2.3, -5.2);
 const coldFill = new THREE.PointLight(0x2f3d4d, 2.5, 8, 2.0);
@@ -178,7 +182,7 @@ const sconceL = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
 sconceL.position.set(-6.5, 2.7, -9.2);
 const sconceR = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
 sconceR.position.set(6.5, 2.7, -9.2);
-scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, rim, coldFill, sconceL, sconceR);
+scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, bounce, rim, coldFill, sconceL, sconceR);
 
 // Faint volumetric cone under the pendant so the key light reads as a real fixture.
 const muzzleLight = new THREE.PointLight(0xffdfae, 0, 5, 2);
@@ -374,7 +378,7 @@ function createNameTag(name) {
     map: texture, transparent: true, depthWrite: false, fog: false, toneMapped: false
   });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(1.5, 0.375, 1);
+  sprite.scale.set(1.75, 0.44, 1);
   const tag = { canvas, ctx, texture, material, sprite, label: name };
   drawNameTag(tag, name);
   return tag;
@@ -975,7 +979,7 @@ function animate() {
     const p = players[tag.idx];
     tag.sprite.visible = !!p && !p.isDead && tag.idx !== S.you;
     const hot = hovering && hi === tag.idx;
-    tag.material.opacity = hot ? 1 : tag.idx === S.active ? 0.9 : 0.6;
+    tag.material.opacity = hot ? 1 : tag.idx === S.active ? 0.95 : 0.72;
     tag.material.color.setHex(hot ? 0xffb0a0 : tag.idx === S.active ? 0xffe4b8 : 0xd6d1c3);
   });
 
