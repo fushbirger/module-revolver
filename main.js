@@ -123,8 +123,11 @@ scene.add(
 
 const environment = createEnvironment(scene);
 const sign = environment.getObjectByName('Fortuna Sign');
-const lettering = sign?.getObjectByName('FORTUNA lettering');
-if (!sign || !lettering?.isMesh) throw new Error('Casino environment is missing its Fortuna marquee');
+let lettering;
+sign?.traverse(object => {
+  if (!lettering && object.isMesh && object.name === 'FORTUNA lettering') lettering = object;
+});
+if (!sign || !lettering) throw new Error('Casino environment is missing its Fortuna marquee');
 lettering.material.emissive.setHex(0xffbd36);
 lettering.material.emissiveIntensity = 2.4;
 const gun = createGun(scene);
