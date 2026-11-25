@@ -33,6 +33,7 @@ const server = http.createServer((req, res) => {
   let p;
   try { p = decodeURIComponent(req.url.split('?')[0]); } catch { res.writeHead(400); return res.end(); }
   if (p === '/') p = '/index.html';
+  if (p.split('/').some(segment => segment.startsWith('.'))) { res.writeHead(404); return res.end('not found'); }
   const file = path.normalize(path.join(PUBLIC, p));
   if (file !== PUBLIC && !file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
@@ -430,6 +431,31 @@ const handlers = {
     const i = m.i === null ? null : Number(m.i);
     room.hover = Number.isInteger(i) ? i : null;
     room.seats.forEach(s => { if (s.client && s.client !== c) send(s.client, { t: 'hover', i: room.hover }); });
+    return 'nochange';
+  },
+  leaveTable(c) {
+    const room = rooms.get(c.roomId);
+    if (!room || c.seat < 0) return;
+    if (room.phase !== 'GAME_OVER' && room.phase !== 'LOBBY') {
+      return send(c, { t: 'err', msg: 'FINISH THE MATCH BEFORE LEAVING' });
+    }
+    const removed = c.seat;
+    const wasWinner = room.winner === removed;
+    room.seats.splice(removed, 1);
+    c.roomId = null;
+    c.seat = -1;
+    reindex(room);
+    if (wasWinner) room.winner = -1;
+    else if (room.winner > removed) room.winner -= 1;
+    if (!room.seats.some(s => s.client)) {
+      clearTimers(room);
+      rooms.delete(room.id);
+      broadcastPartyList();
+    } else {
+      ensureHost(room);
+      change(room, true);
+    }
+    send(c, snapshot(c));
     return 'nochange';
   },
   rematch(c) {

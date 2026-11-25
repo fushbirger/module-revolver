@@ -8,7 +8,7 @@ node server.js
 
 Open `http://localhost:3000` (Node 18+, no npm install required).
 
-Create a named party from the **MAKE PARTY** screen or join an open party from the party list. Parties hold 3–12 players to start. The green **EXIT** sign returns to the party list. The party leader can add bots and starts the match with **START**; other members wait in the lobby until then.
+Create a named party from the **MAKE PARTY** screen or join an open party from the party list. Parties hold 3–12 players to start. The red **EXIT** sign returns to the party list. The party leader can add bots and starts the match with **START**; other members wait in the lobby until then.
 
 For a quick test with three bots:
 
@@ -37,19 +37,34 @@ Spins automatically stop after 10 seconds, so a player cannot keep the wheel spi
 
 The browser loads Three.js r160 from jsDelivr, so an internet connection is required.
 
-## Updated scene models
+## Scene models and art direction
 
-- `assets/blockbench/` contains editable low-poly Blockbench projects for the casino environment, veneer table, seated trenchcoat silhouettes and chairs, chess-clock life monitor, and twin-chamber revolver. A shared, desaturated atlas gives the models hard-worn treatments: pitted oxide steel, abraded gunmetal, scratched walnut, bruised velvet, cracked concrete, and blood-dark enamel.
-- `models.js` loads the Blockbench assets, scales seated players to at least 3× their previous size, and positions the revolver in the holder's hand.
-- `scripts/build_blockbench_assets.mjs` regenerates the Blockbench projects and texture atlas with continuous UVs across round surfaces, so the veneer reads as a single tabletop rather than repeated wedges.
-- `main.js` gives each player a three-needle life clock, removes one needle immediately on a hit, and lets the active player click another player's body or use the lower-center self-shot button. Targeting falls back to nearby head/torso screen positions when a click misses a model mesh; rejected targets are reported without advancing the turn. It also animates self-aiming and hit reactions, spaces oversized seats, moves the room behind the table, and uses a compact gold key light with a red rim light.
-- `index.html` is the game entry point.
+The game ships two derived variants of every 3D asset. Both are committed so the game runs without a build step:
 
-The table and casino environment are created once and are not attached to round or player animations. Room fixtures stay fixed, and the scene renders directly without post-processing to reduce GPU load.
+| Asset | Realistic | Low poly (default) |
+| --- | --- | --- |
+| `casino_environment` | `casino_environment_realistic.bbmodel` | `casino_environment_lowpoly.bbmodel` |
+| `seated_mafioso` | `seated_mafioso_realistic.bbmodel` | `seated_mafioso_lowpoly.bbmodel` |
+| `twin_chamber_revolver` | `twin_chamber_revolver_realistic.bbmodel` | `twin_chamber_revolver_lowpoly.bbmodel` |
+| `chess_clock_monitor` | `chess_clock_monitor_realistic.bbmodel` | `chess_clock_monitor_lowpoly.bbmodel` |
+
+Regenerate everything with:
+
+```bash
+node scripts/build_blockbench_assets.mjs
+```
+
+The generator writes both variants plus albedo atlases (`assets/blockbench/textures/realistic_albedo.png`, `lowpoly_albedo.png`) and, for the realistic variant, matching normal/roughness/metalness atlases. The realistic models use more segments and smooth, merged shading; the low-poly variants keep faceted silhouettes. Switch at runtime with `?models=realistic` (default is `lowpoly`).
+
+- `models.js` parses the `.bbmodel` JSON, rebuilds indexed geometry (welding vertices for the realistic variant), builds PBR materials from the atlases, and places the revolver in the holder's hand.
+- `main.js` runs a first-person seat camera, gives every player a three-needle life clock, animates self-aiming, hit reactions and the body collapse, and projects the revolver's muzzle flash. The click-to-target path raycasts player bodies and falls back to nearby head/torso screen positions when a click misses a mesh.
+- The look is a desaturated ULTRAKILL palette over Buckshot Roulette lighting: one hard warm key light over the table, a red rim light behind it, deep black walls, film grain, a heavy vignette and a bloom pass. The colour grade keeps roughly 20% saturation and pushes contrast. Add `?post=0` to disable post-processing for debugging.
+- `index.html` is the entry point and shows a boot overlay with the full error if a module fails to load.
+- `server.js` blocks dotfiles (`.git`, `.devcontainer`) and exposes a `leaveTable` action so any player can return to the party list after a match.
 
 ## Validation
 
-The JavaScript files pass Node syntax checks. A full visual browser render has not been independently verified in this environment, so check the scene in-browser after extracting the package.
+`node --check` passes for every JavaScript file, the asset generator runs cleanly, and the build was verified in headless Chromium (WebGL renders, no console or page errors, full match played to a winner). Check the scene in a real browser after deploying; the headless run uses SwiftShader, so frame rate is not representative.
 
 ## Blockbench 3D editor
 
