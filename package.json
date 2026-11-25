@@ -8,5 +8,8 @@
     "dev": "node server.js",
     "fast": "SPEED=10 node server.js"
   },
+  "stackblitz": {
+    "startCommand": "npm start"
+  },
   "engines": { "node": ">=18" }
 }

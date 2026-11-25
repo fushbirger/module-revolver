@@ -25,7 +25,7 @@ TURN_SECONDS=20 node server.js  # shorter inactivity limit
 
 ## Run in StackBlitz
 
-Use the **Server** template (not a browser-only static template) and run:
+Use the **Server** template (not a browser-only static template). StackBlitz is configured to start the server with `npm start` when the project opens. If it does not start automatically, run:
 
 ```bash
 npm start
