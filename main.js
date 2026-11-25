@@ -199,7 +199,7 @@ const GradeShader = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uSaturation: { value: 0.2 },
+    uSaturation: { value: 0.55 },
     uContrast: { value: 1.2 },
     uVignette: { value: 0.92 },
     uGrain: { value: 0.055 }

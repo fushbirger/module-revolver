@@ -54,11 +54,13 @@ Regenerate everything with:
 node scripts/build_blockbench_assets.mjs
 ```
 
-The generator writes both variants plus albedo atlases (`assets/blockbench/textures/realistic_albedo.png`, `lowpoly_albedo.png`) and, for the realistic variant, matching normal/roughness/metalness atlases. The realistic models use more segments and smooth, merged shading; the low-poly variants keep faceted silhouettes. Switch at runtime with `?models=realistic` (default is `lowpoly`).
+The generator builds the realistic models first, then derives the low-poly variants from them. Every `mesh` element is reduced with a quadric edge-collapse decimator (boundary-weighted, normal-flip guarded, roughly 35% of the source triangles) and its per-corner UVs are rescaled from the 512x640 realistic atlas into the 128x160 low-poly atlas; `cube` elements keep their geometry and only have their UVs rescaled. The low-poly file is therefore a simplification of the realistic mesh, not a second independent build, so the silhouettes match.
+
+It writes both variants plus albedo atlases (`assets/blockbench/textures/realistic_albedo.png`, `lowpoly_albedo.png`) and, for the realistic variant, matching normal/roughness/metalness atlases. Switch at runtime with `?models=realistic` (default is the derived `lowpoly`).
 
 - `models.js` parses the `.bbmodel` JSON, rebuilds indexed geometry (welding vertices for the realistic variant), builds PBR materials from the atlases, and places the revolver in the holder's hand.
 - `main.js` runs a first-person seat camera, gives every player a three-needle life clock, animates self-aiming, hit reactions and the body collapse, and projects the revolver's muzzle flash. The click-to-target path raycasts player bodies and falls back to nearby head/torso screen positions when a click misses a mesh.
-- The look is a desaturated ULTRAKILL palette over Buckshot Roulette lighting: one hard warm key light over the table, a red rim light behind it, deep black walls, film grain, a heavy vignette and a bloom pass. The colour grade keeps roughly 20% saturation and pushes contrast. Add `?post=0` to disable post-processing for debugging.
+- Two separate layers carry the look. The desaturated ULTRAKILL palette is baked into the albedo atlas at generation time (chroma reduced to 36%, contrast pushed, a little grain), so the materials read correctly on their own. The Buckshot Roulette lighting is staging, not the definition: one hard warm key light over the table, a red rim light behind it, deep black walls, film grain, a heavy vignette and a bloom pass. The colour grade now only tops up saturation (0.55) and contrast, so `?post=0` still shows the intended palette.
 - `index.html` is the entry point and shows a boot overlay with the full error if a module fails to load.
 - `server.js` blocks dotfiles (`.git`, `.devcontainer`) and exposes a `leaveTable` action so any player can return to the party list after a match.
 

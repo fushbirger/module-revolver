@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { deflateSync } from 'node:zlib';
 
 const output = new URL('../assets/blockbench/', import.meta.url);
@@ -331,6 +331,24 @@ function generateMarquee(style, width, height) {
   return albedo;
 }
 
+function gradeAtlasAlbedo(albedo) {
+  // Bake the desaturated ULTRAKILL palette into the texture so the material look
+  // survives without the post-process grade. Post keeps a light pass only.
+  const CHROMA = 0.36;
+  const CONTRAST = 1.12;
+  const toSrgb = value => Math.round(Math.min(1, Math.max(0, value)) * 255);
+  for (let i = 0; i < albedo.length; i += 3) {
+    const r = albedo[i] / 255, g = albedo[i + 1] / 255, b = albedo[i + 2] / 255;
+    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const shape = value => (value - 0.5) * CONTRAST + 0.5;
+    const grain = ((Math.sin((i * 12.9898) % 6.283) * 43758.5453) % 1) * 3;
+    albedo[i] = toSrgb(shape(luma + (r - luma) * CHROMA) + grain / 255);
+    albedo[i + 1] = toSrgb(shape(luma + (g - luma) * CHROMA) + grain / 255);
+    albedo[i + 2] = toSrgb(shape(luma + (b - luma) * CHROMA) + grain / 255);
+  }
+  return albedo;
+}
+
 function buildAtlas(style) {
   const { tile, width, height } = atlasMetrics(style);
   const albedo = new Uint8Array(width * height * 3);
@@ -374,7 +392,243 @@ function buildAtlas(style) {
     }
   }
 
+  gradeAtlasAlbedo(albedo);
   return { tile, width, height, albedo, roughness, metalness, normal };
+}
+
+/* ================================================================ low-poly derivation */
+
+class MinHeap {
+  constructor() { this.items = []; }
+  get size() { return this.items.length; }
+  push(item) {
+    const items = this.items;
+    items.push(item);
+    let i = items.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (items[parent].cost <= items[i].cost) break;
+      [items[parent], items[i]] = [items[i], items[parent]];
+      i = parent;
+    }
+  }
+  pop() {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length) {
+      items[0] = last;
+      let i = 0;
+      for (;;) {
+        const left = i * 2 + 1, right = left + 1;
+        let best = i;
+        if (left < items.length && items[left].cost < items[best].cost) best = left;
+        if (right < items.length && items[right].cost < items[best].cost) best = right;
+        if (best === i) break;
+        [items[best], items[i]] = [items[i], items[best]];
+        i = best;
+      }
+    }
+    return top;
+  }
+}
+
+function addPlaneQuadric(quadric, nx, ny, nz, d, weight) {
+  quadric[0] += weight * nx * nx; quadric[1] += weight * nx * ny; quadric[2] += weight * nx * nz; quadric[3] += weight * nx * d;
+  quadric[4] += weight * ny * ny; quadric[5] += weight * ny * nz; quadric[6] += weight * ny * d;
+  quadric[7] += weight * nz * nz; quadric[8] += weight * nz * d; quadric[9] += weight * d * d;
+}
+
+function quadricError(quadric, x, y, z) {
+  return quadric[0] * x * x + 2 * quadric[1] * x * y + 2 * quadric[2] * x * z + 2 * quadric[3] * x
+    + quadric[4] * y * y + 2 * quadric[5] * y * z + 2 * quadric[6] * y
+    + quadric[7] * z * z + 2 * quadric[8] * z + quadric[9];
+}
+
+function faceNormal(a, b, c) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+  const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const length = Math.hypot(nx, ny, nz);
+  return length < 1e-12 ? null : [nx / length, ny / length, nz / length, length / 2];
+}
+
+function decimateMeshElement(element, ratio) {
+  const keys = Object.keys(element.vertices || {});
+  const lookup = new Map(keys.map((key, index) => [key, index]));
+  const pos = keys.map(key => element.vertices[key].slice());
+  const tris = [];
+  for (const face of Object.values(element.faces || {})) {
+    const corners = face.vertices || [];
+    const uvs = corners.map(key => (face.uv && face.uv[key]) || [0, 0]);
+    for (let i = 1; i < corners.length - 1; i++) {
+      tris.push({
+        v: [lookup.get(corners[0]), lookup.get(corners[i]), lookup.get(corners[i + 1])],
+        uv: [uvs[0], uvs[i], uvs[i + 1]],
+        texture: face.texture ?? 0,
+        alive: true
+      });
+    }
+  }
+  const target = Math.max(8, Math.round(tris.length * ratio));
+  if (tris.length < 16 || target >= tris.length) return element;
+
+  const vtri = Array.from({ length: pos.length }, () => []);
+  const quadrics = Array.from({ length: pos.length }, () => new Float64Array(10));
+  const edgeFaces = new Map();
+  tris.forEach((tri, index) => {
+    tri.v.forEach(vertex => vtri[vertex].push(index));
+    const normal = faceNormal(pos[tri.v[0]], pos[tri.v[1]], pos[tri.v[2]]);
+    if (normal) {
+      const [nx, ny, nz, area] = normal;
+      const d = -(nx * pos[tri.v[0]][0] + ny * pos[tri.v[0]][1] + nz * pos[tri.v[0]][2]);
+      for (const vertex of tri.v) addPlaneQuadric(quadrics[vertex], nx, ny, nz, d, area);
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = tri.v[i], b = tri.v[(i + 1) % 3];
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+      const entry = edgeFaces.get(key);
+      if (entry) entry.count += 1;
+      else edgeFaces.set(key, { a, b, count: 1, tri: index });
+    }
+  });
+  for (const edge of edgeFaces.values()) {
+    if (edge.count > 1) continue;
+    const tri = tris[edge.tri];
+    const normal = faceNormal(pos[tri.v[0]], pos[tri.v[1]], pos[tri.v[2]]);
+    if (!normal) continue;
+    const ex = pos[edge.b][0] - pos[edge.a][0];
+    const ey = pos[edge.b][1] - pos[edge.a][1];
+    const ez = pos[edge.b][2] - pos[edge.a][2];
+    const bx = ey * normal[2] - ez * normal[1];
+    const by = ez * normal[0] - ex * normal[2];
+    const bz = ex * normal[1] - ey * normal[0];
+    const length = Math.hypot(bx, by, bz);
+    if (length < 1e-9) continue;
+    const nx = bx / length, ny = by / length, nz = bz / length;
+    const d = -(nx * pos[edge.a][0] + ny * pos[edge.a][1] + nz * pos[edge.a][2]);
+    const weight = Math.hypot(ex, ey, ez) * 40;
+    addPlaneQuadric(quadrics[edge.a], nx, ny, nz, d, weight);
+    addPlaneQuadric(quadrics[edge.b], nx, ny, nz, d, weight);
+  }
+
+  const alive = new Array(pos.length).fill(true);
+  const version = new Int32Array(pos.length);
+  const heap = new MinHeap();
+  const midpoint = (a, b) => [
+    (pos[a][0] + pos[b][0]) / 2,
+    (pos[a][1] + pos[b][1]) / 2,
+    (pos[a][2] + pos[b][2]) / 2
+  ];
+  const pushEdge = (a, b) => {
+    if (!alive[a] || !alive[b]) return;
+    const m = midpoint(a, b);
+    const q = new Float64Array(10);
+    for (let i = 0; i < 10; i++) q[i] = quadrics[a][i] + quadrics[b][i];
+    let cost = quadricError(q, m[0], m[1], m[2]);
+    if (!Number.isFinite(cost)) cost = Number.MAX_VALUE;
+    heap.push({ cost: Math.max(0, cost), a, b, va: version[a], vb: version[b] });
+  };
+  for (const edge of edgeFaces.values()) pushEdge(edge.a, edge.b);
+
+  const canCollapse = (a, b) => {
+    const m = midpoint(a, b);
+    for (const list of [vtri[a], vtri[b]]) {
+      for (const index of list) {
+        const tri = tris[index];
+        if (!tri.alive) continue;
+        const hasA = tri.v.includes(a), hasB = tri.v.includes(b);
+        if (hasA && hasB) continue;
+        const before = faceNormal(pos[tri.v[0]], pos[tri.v[1]], pos[tri.v[2]]);
+        const after = faceNormal(...tri.v.map(vertex => (vertex === a ? m : pos[vertex])));
+        if (!after || after[3] < 1e-7) return false;
+        if (before && before[0] * after[0] + before[1] * after[1] + before[2] * after[2] < 0.15) return false;
+      }
+    }
+    return true;
+  };
+
+  let liveFaces = tris.length;
+  while (liveFaces > target && heap.size) {
+    const edge = heap.pop();
+    const { a, b } = edge;
+    if (!alive[a] || !alive[b] || version[a] !== edge.va || version[b] !== edge.vb) continue;
+    if (!canCollapse(a, b)) continue;
+    const m = midpoint(a, b);
+    for (const index of vtri[a]) {
+      const tri = tris[index];
+      if (tri.alive && tri.v.includes(b)) { tri.alive = false; liveFaces -= 1; }
+    }
+    for (const index of vtri[a]) {
+      const tri = tris[index];
+      if (!tri.alive) continue;
+      tri.v = tri.v.map(vertex => (vertex === a ? b : vertex));
+      vtri[b].push(index);
+    }
+    for (let i = 0; i < 10; i++) quadrics[b][i] += quadrics[a][i];
+    pos[b] = m;
+    alive[a] = false;
+    version[a] += 1;
+    version[b] += 1;
+    vtri[a] = [];
+    vtri[b] = [...new Set(vtri[b])];
+    for (const index of vtri[b]) {
+      for (const vertex of tris[index].v) if (vertex !== b) pushEdge(b, vertex);
+    }
+  }
+
+  const used = new Set();
+  for (const tri of tris) if (tri.alive) tri.v.forEach(vertex => used.add(vertex));
+  if (used.size < 3) return element;
+  const remap = new Map();
+  const vertices = {};
+  let index = 0;
+  for (const vertex of used) {
+    const key = `v${index}`;
+    remap.set(vertex, key);
+    vertices[key] = pos[vertex].map(value => Math.round(value * 1e4) / 1e4);
+    index += 1;
+  }
+  const faces = {};
+  let faceIndex = 0;
+  for (const tri of tris) {
+    if (!tri.alive) continue;
+    const cornerKeys = tri.v.map(vertex => remap.get(vertex));
+    if (new Set(cornerKeys).size < 3) continue;
+    faces[faceIndex] = {
+      vertices: cornerKeys,
+      uv: Object.fromEntries(cornerKeys.map((key, corner) => [key, tri.uv[corner]])),
+      texture: tri.texture
+    };
+    faceIndex += 1;
+  }
+  return { ...element, vertices, faces };
+}
+
+function deriveLowPoly(realistic, { ratio = 0.35, uvScale = 0.25, atlas } = {}) {
+  const model = structuredClone(realistic);
+  model.meta = { ...model.meta, style: 'lowpoly' };
+  model.resolution = { width: atlas.width, height: atlas.height };
+  model.textures = (model.textures || []).map(texture => ({
+    ...texture,
+    path: 'textures/lowpoly_albedo.png',
+    relative_path: 'textures/lowpoly_albedo.png',
+    name: 'lowpoly_albedo.png',
+    width: atlas.width,
+    height: atlas.height,
+    uv_width: atlas.width,
+    uv_height: atlas.height
+  }));
+  const scaleUv = value => Math.round(value * uvScale * 100) / 100;
+  model.elements = model.elements.map(element => {
+    const derived = element.type === 'mesh' ? decimateMeshElement(element, ratio) : element;
+    for (const face of Object.values(derived.faces || {})) {
+      if (Array.isArray(face.uv)) face.uv = face.uv.map(scaleUv);
+      else if (face.uv) for (const key of Object.keys(face.uv)) face.uv[key] = face.uv[key].map(scaleUv);
+    }
+    return derived;
+  });
+  return model;
 }
 
 /* ================================================================ project builder */
@@ -1004,20 +1258,27 @@ async function buildModels(style, atlas) {
 await mkdir(output, { recursive: true });
 await mkdir(textureDir, { recursive: true });
 
-for (const style of ['realistic', 'lowpoly']) {
-  const atlas = buildAtlas(style);
-  await writeFile(new URL(`${style}_albedo.png`, textureDir),
-    encodePNG(atlas.width, atlas.height, 3, atlas.albedo));
-  if (style === 'realistic') {
-    await writeFile(new URL('realistic_roughness.png', textureDir),
-      encodePNG(atlas.width, atlas.height, 1, atlas.roughness));
-    await writeFile(new URL('realistic_metalness.png', textureDir),
-      encodePNG(atlas.width, atlas.height, 1, atlas.metalness));
-    await writeFile(new URL('realistic_normal.png', textureDir),
-      encodePNG(atlas.width, atlas.height, 3, atlas.normal));
-  }
-  await buildModels(style, atlas);
-  console.log(`Generated ${style} models and ${style} albedo atlas (${atlas.width}x${atlas.height})`);
-}
+const realisticAtlas = buildAtlas('realistic');
+await writeFile(new URL('realistic_albedo.png', textureDir),
+  encodePNG(realisticAtlas.width, realisticAtlas.height, 3, realisticAtlas.albedo));
+await writeFile(new URL('realistic_roughness.png', textureDir),
+  encodePNG(realisticAtlas.width, realisticAtlas.height, 1, realisticAtlas.roughness));
+await writeFile(new URL('realistic_metalness.png', textureDir),
+  encodePNG(realisticAtlas.width, realisticAtlas.height, 1, realisticAtlas.metalness));
+await writeFile(new URL('realistic_normal.png', textureDir),
+  encodePNG(realisticAtlas.width, realisticAtlas.height, 3, realisticAtlas.normal));
+await buildModels('realistic', realisticAtlas);
+console.log(`Generated realistic models and realistic albedo atlas (${realisticAtlas.width}x${realisticAtlas.height})`);
 
-console.log('Done: casino_environment, seated_mafioso, twin_chamber_revolver, chess_clock_monitor (realistic + lowpoly)');
+const lowpolyAtlas = buildAtlas('lowpoly');
+await writeFile(new URL('lowpoly_albedo.png', textureDir),
+  encodePNG(lowpolyAtlas.width, lowpolyAtlas.height, 3, lowpolyAtlas.albedo));
+const MODELS = ['casino_environment', 'seated_mafioso', 'twin_chamber_revolver', 'chess_clock_monitor'];
+for (const name of MODELS) {
+  const realistic = JSON.parse(await readFile(new URL(`${name}_realistic.bbmodel`, output), 'utf8'));
+  const lowpoly = deriveLowPoly(realistic, { atlas: lowpolyAtlas });
+  await writeFile(new URL(`${name}_lowpoly.bbmodel`, output), `${JSON.stringify(lowpoly)}\n`);
+}
+console.log(`Derived lowpoly models from the realistic meshes and lowpoly albedo atlas (${lowpolyAtlas.width}x${lowpolyAtlas.height})`);
+
+console.log('Done: casino_environment, seated_mafioso, twin_chamber_revolver, chess_clock_monitor (realistic + derived lowpoly)');
