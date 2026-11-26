@@ -8,8 +8,6 @@ export const MODEL_STYLES = ['realistic', 'lowpoly'];
 
 const modelTemplates = new Map();
 const textureCache = new Map();
-const eyeGeometry = new THREE.SphereGeometry(0.2, 12, 10);
-const noseGeometry = new THREE.ConeGeometry(0.28, 1.0, 6);
 let activeStyle = 'lowpoly';
 
 export function resolveModelStyle(value) {
@@ -39,7 +37,7 @@ function makeMaterial(maps, name, style) {
     envMapIntensity: 0.45
   });
   if (maps.normal) material.normalScale.set(1.1, 1.1);
-  if (/fortuna lettering/i.test(name)) {
+  if (/silvershot lettering/i.test(name)) {
     material.emissive.setHex(0xffffff);
     material.emissiveMap = maps.albedo;
     material.emissiveIntensity = 1.5;
@@ -178,13 +176,21 @@ function createProject(project, maps, style) {
   return root;
 }
 
-async function loadMap(url, srgb) {
-  const key = `${url}|${srgb}`;
+async function loadMap(url, srgb, pixelated = false) {
+  const key = `${url}|${srgb}|${pixelated}`;
   const cached = textureCache.get(key);
   if (cached) return cached;
   const texture = await new THREE.TextureLoader().loadAsync(url);
   texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  texture.anisotropy = 8;
+  if (pixelated) {
+    // ULTRAKILL-style point sampling: texels stay hard-edged up close, and the nearest
+    // mip level keeps them from shimmering at a distance.
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestMipmapNearestFilter;
+    texture.anisotropy = 1;
+  } else {
+    texture.anisotropy = 8;
+  }
   textureCache.set(key, texture);
   return texture;
 }
@@ -198,7 +204,8 @@ async function loadProject(filename, style) {
   }
 
   const albedoPath = project.textures[0]?.path || `textures/${style}_albedo.png`;
-  const maps = { albedo: await loadMap(new URL(albedoPath, MODEL_PATH), true) };
+  const pixelated = style === 'lowpoly';
+  const maps = { albedo: await loadMap(new URL(albedoPath, MODEL_PATH), true, pixelated) };
   if (style === 'realistic') {
     maps.roughness = await loadMap(new URL('textures/realistic_roughness.png', MODEL_PATH), false);
     maps.metalness = await loadMap(new URL('textures/realistic_metalness.png', MODEL_PATH), false);
@@ -266,7 +273,7 @@ function findMesh(root, name) {
 const GLOWING = [
   [/^sconce glass/i, 0xffb367, 2.4],
   [/^pendant glass/i, 0xffd9a0, 1.5],
-  [/^FORTUNA lettering$/i, 0xd2242c, 1.6],
+  [/^SILVERSHOT lettering$/i, 0xd2242c, 1.6],
   [/^marquee inset$/i, 0x7c1016, 0.9],
   [/^roulette velvet field$/i, 0x5c0b10, 0.8]
 ];
@@ -288,7 +295,7 @@ export function createEnvironment(scene) {
 
 export function createGun(scene) {
   const root = new THREE.Group();
-  root.name = 'Fortuna Twin-chamber Revolver';
+  root.name = 'Silvershot Twin-chamber Revolver';
   const model = cloneModel('twin_chamber_revolver');
   model.scale.setScalar(BLOCKBENCH_SCALE * 1.25);   // an 8 m table swallows a life-size revolver
   model.traverse(object => {
@@ -296,6 +303,7 @@ export function createGun(scene) {
     object.castShadow = true;
     object.receiveShadow = true;
   });
+  model.position.set(0, 0.035, 0.06);              // keeps the new, larger grip where the hand holds it
   root.position.set(0, 0.88, 0.35);
   root.add(model);
   scene.add(root);
@@ -333,10 +341,10 @@ export function createMachine(scene) {
 export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   const root = cloneModel('seated_mafioso');
   cloneMaterials(root);
-  liftFromBlack(root, 0x7d7466, 1.15);
+  liftFromBlack(root, 0x7d7466, 0.6);
   // The atlas is a near-black suit. Under a room this dark that reads as a hole, so the
   // albedo itself is lifted: the figures stay pale grey and the practicals still shape them.
-  root.traverse(object => { if (object.isMesh) object.material.color.setScalar(1.5); });
+  root.traverse(object => { if (object.isMesh) object.material.color.setScalar(1.25); });
   root.position.set(x, y, z);
   root.rotation.y = rotY;
   root.scale.setScalar(BLOCKBENCH_SCALE);
@@ -351,24 +359,25 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   const headTilt = headTilts[variantIndex];
   head.rotation.z = headTilt;
 
-  const eyeMaterial = new THREE.MeshStandardMaterial({
-    color: 0x2b1411,
-    emissive: 0xff4a2c,
-    emissiveIntensity: 1.9,
-    roughness: 0.34
+  // Faces carry no features at all: no eyes, no nose, no painted detail. Every mesh in the
+  // head gets one dark, solid material with a slight sheen and no self-illumination, so
+  // the head is a shadowed body that only shows its shape where the room's lights catch it.
+  const shadowHead = new THREE.MeshStandardMaterial({
+    color: 0x1b1714,
+    roughness: 0.42,
+    metalness: 0.12,
+    flatShading: activeStyle === 'lowpoly',
+    side: THREE.DoubleSide,
+    envMapIntensity: 1.1
   });
-  const eyes = [-0.62, 0.62].map(ex => {
-    const eye = mk(eyeGeometry, eyeMaterial, ex, 2.25, 1.52, 0, 0, 0, false);
-    eye.scale.set(1, 0.55, 0.4);
-    eye.userData.openScaleY = 0.55;
-    head.add(eye);
-    return eye;
+  head.traverse(object => {
+    if (!object.isMesh) return;
+    if (/tie|band/i.test(object.name)) {          // keeps its own colour, just no self-glow
+      object.material.emissiveIntensity = 0;
+      return;
+    }
+    object.material = shadowHead;
   });
-  head.add(mk(
-    noseGeometry,
-    new THREE.MeshStandardMaterial({ color: 0x5a463c, roughness: 0.9 }),
-    0, 1.7, 1.78, Math.PI / 2, 0, 0, false
-  ));
 
   const arm = findObject(root, 'GunArm');
   const hand = findObject(root, 'Hand');
@@ -396,9 +405,6 @@ export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
     headTilt,
     hand,
     arm,
-    eyes,
-    nextBlinkAt: performance.now() + 1200 + Math.random() * 4000,
-    blinkUntil: 0,
     hitAt: 0,
     firstPersonParts: [
       findObject(root, 'Torso'),

@@ -282,7 +282,13 @@ const GLYPHS = {
   T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
   U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
   N: ['10001', '11001', '11001', '10101', '10011', '10011', '10001'],
-  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001']
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
+  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001']
 };
 
 function generateMarquee(style, width, height) {
@@ -303,9 +309,10 @@ function generateMarquee(style, width, height) {
   }
 
   const scale = style === 'realistic' ? 8 : 2;
-  const title = 'FORTUNA';
-  const advance = 6 * scale;
-  const total = title.length * advance - scale;
+  const title = 'SILVERSHOT';
+  const gap = Math.max(1, Math.round(scale / 2));
+  const advance = 5 * scale + gap;
+  const total = title.length * advance - gap;
   let cursor = Math.floor((width - total) / 2);
   const top = Math.floor((height - 7 * scale) / 2);
   for (const letter of title) {
@@ -332,29 +339,13 @@ function generateMarquee(style, width, height) {
 }
 
 function gradeAtlasAlbedo(albedo, width) {
-  // Bake the desaturated ULTRAKILL palette into the texture so the material look
-  // survives without the post-process grade, then let it drift: a slow hue bleed
-  // and a melt wave so the surfaces read like something seen through a migraine.
+  // Bake the desaturated ULTRAKILL palette into the texture: chroma pulled down,
+  // contrast pushed, a little grain. No hue drift or warping.
   const CHROMA = 0.36;
   const CONTRAST = 1.12;
   const toSrgb = value => Math.round(Math.min(1, Math.max(0, value)) * 255);
   for (let i = 0; i < albedo.length; i += 3) {
-    const pixel = i / 3;
-    const px = pixel % width, py = Math.floor(pixel / width);
-    let r = albedo[i] / 255, g = albedo[i + 1] / 255, b = albedo[i + 2] / 255;
-    const wave = Math.sin(px * 0.09 + py * 0.05) * 0.6 + Math.sin(px * 0.031 - py * 0.077) * 0.4;
-    const bleed = 0.12 * wave;
-    const alt = [b, r, g];
-    const drift = 0.12 * Math.sin(px * 0.03 + py * 0.02);
-    const bled = [
-      r + (b - r) * bleed + (alt[0] - r) * drift,
-      g + (r - g) * bleed * 0.7 + (alt[1] - g) * drift,
-      b + (g - b) * bleed * 0.9 + (alt[2] - b) * drift
-    ];
-    const melt = 1 + Math.sin(py * 0.21 + Math.sin(px * 0.06) * 1.7) * 0.05;
-    r = Math.min(1, Math.max(0, bled[0] * melt));
-    g = Math.min(1, Math.max(0, bled[1] * melt));
-    b = Math.min(1, Math.max(0, bled[2] * melt));
+    const r = albedo[i] / 255, g = albedo[i + 1] / 255, b = albedo[i + 2] / 255;
     const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const shape = value => (value - 0.5) * CONTRAST + 0.5;
     const grain = ((Math.sin((i * 12.9898) % 6.283) * 43758.5453) % 1) * 3;
@@ -487,7 +478,7 @@ function decimateMeshElement(element, ratio) {
     }
   }
   const target = Math.max(8, Math.round(tris.length * ratio));
-  if (tris.length < 16 || target >= tris.length) return element;
+  if (tris.length < 40 || target >= tris.length) return element;
 
   const vtri = Array.from({ length: pos.length }, () => []);
   const quadrics = Array.from({ length: pos.length }, () => new Float64Array(10));
@@ -986,8 +977,8 @@ function normalize(value) {
 async function buildModels(style, atlas) {
   /* -------------------------------------------------------------- casino */
   const casino = createProject(
-    'Fortuna Casino Interior',
-    'Fortuna casino interior: stained concrete, oxblood velvet panelling, brass reveals, a marquee, a wall roulette wheel and a round veneer table. Units are 1/16 m; the floor is y = 0.',
+    'Silvershot Casino Interior',
+    'Silvershot casino interior: stained concrete, oxblood velvet panelling, brass reveals, a marquee, a wall roulette wheel and a round veneer table. Units are 1/16 m; the floor is y = 0.',
     style, atlas
   );
   const room = casino.group('Room Shell');
@@ -1020,10 +1011,10 @@ async function buildModels(style, atlas) {
     casino.box(room, 'Right wall panel', [152.3, 22, z0], [153.7, 72, z0 + 56], 'velvet', 0.6);
   }
 
-  const signGroup = casino.group('Fortuna Sign');
+  const signGroup = casino.group('Silvershot Sign');
   casino.box(signGroup, 'Marquee housing', [-52, 74, -153.8], [52, 96, -150.4], 'enamel', 0.6);
   casino.box(signGroup, 'Marquee inset', [-47, 77.5, -150.6], [47, 92.5, -149.9], 'blood', 0.4);
-  casino.plane(signGroup, 'FORTUNA lettering', [
+  casino.plane(signGroup, 'SILVERSHOT lettering', [
     [-44, 79, -149.85], [44, 79, -149.85], [44, 91, -149.85], [-44, 91, -149.85]
   ], 'sign', [
     [0, atlas.height], [atlas.width, atlas.height],
@@ -1062,16 +1053,41 @@ async function buildModels(style, atlas) {
   casino.cylinder(fixtures, 'Pendant glass', 0, 74.8, 0, 8, 2.2, 'bone', casino.D.segments, 'y');
 
   const table = casino.group('Round Pedestal Table');
-  casino.cylinder(table, 'Pedestal foot', 0, 1.5, 0, 12, 3, 'enamel', casino.D.segments);
-  casino.torus(table, 'Pedestal foot ring', 0, 3, 0, 11.6, 0.7, 'brass', casino.D.segments, 6);
-  casino.cylinder(table, 'Pedestal column', 0, 7.2, 0, 4.2, 8.4, 'enamel', casino.D.mid);
-  casino.cylinder(table, 'Pedestal collar', 0, 11.4, 0, 5.6, 1.0, 'brass', casino.D.mid);
-  casino.cylinder(table, 'Table apron', 0, 12.2, 0, 20, 1.2, 'walnut_dark', casino.D.segments, 'y');
-  casino.cylinder(table, 'Veneer tabletop', 0, 13.0, 0, 21.6, 1.4, 'walnut', casino.D.segments, 'y');
-  casino.torus(table, 'Table edge molding', 0, 13.0, 0, 21.6, 0.55, 'walnut_dark', casino.D.segments, 6);
-  casino.torus(table, 'Brass table inlay', 0, 13.7, 0, 20.4, 0.22, 'brass', casino.D.segments, 5);
-  casino.cylinder(table, 'Suede playing field', 0, 13.74, 0, 14, 0.2, 'velvet', casino.D.segments, 'y');
-  casino.torus(table, 'Inner pinstripe', 0, 13.84, 0, 14.1, 0.1, 'brass', casino.D.segments, 4);
+  // Dark, worn plank top with a thick rolled rim, a flat brass medallion at the centre and a
+  // carved pedestal that splays into four clawed brass feet. The playing surface stays at
+  // y = 13.7 so the props below still sit on it.
+  casino.cylinder(table, 'Table apron', 0, 11.9, 0, 19.4, 1.8, 'walnut_dark', casino.D.segments, 'y');
+  casino.torus(table, 'Brass apron band', 0, 10.9, 0, 19.9, 0.38, 'brass', casino.D.segments, 5);
+  casino.cylinder(table, 'Veneer tabletop', 0, 12.95, 0, 20.6, 1.5, 'walnut', casino.D.segments, 'y');
+  casino.torus(table, 'Table rim', 0, 13.3, 0, 20.5, 1.35, 'walnut', casino.D.segments, 7);
+  casino.torus(table, 'Table edge molding', 0, 12.6, 0, 21.4, 0.55, 'walnut_dark', casino.D.segments, 6);
+  for (const z of [-13, -6.5, 0, 6.5, 13]) {
+    const half = Math.sqrt(18.4 * 18.4 - z * z);
+    casino.addCube(table, 'Plank seam', [-half, 13.7, z - 0.07], [half, 13.76, z + 0.07], 'shadow');
+  }
+  [[-9, 2, 5.5, 20], [8, -10, 4, -35], [4, 9, 3.5, 70]].forEach(([cx, cz, len, deg]) => {
+    casino.addCube(table, 'Wood crack', [cx - len, 13.7, cz - 0.05], [cx + len, 13.75, cz + 0.05], 'shadow', [0, deg, 0]);
+  });
+  casino.cylinder(table, 'Medallion plate', 0, 13.8, 0, 5.0, 0.2, 'brass', casino.D.mid, 'y');
+  casino.torus(table, 'Medallion bezel', 0, 13.95, 0, 4.8, 0.26, 'brass', casino.D.mid, 5);
+  casino.cylinder(table, 'Medallion dish', 0, 13.93, 0, 3.9, 0.1, 'steel_worn', casino.D.mid, 'y');
+  for (let i = 0; i < 16; i++) {
+    casino.addCube(table, 'Medallion ray', [1.0, 13.93, -0.16], [3.7, 14.0, 0.16], 'brass', [0, i * 22.5, 0], [0, 13.95, 0]);
+  }
+  casino.cylinder(table, 'Medallion boss', 0, 14.0, 0, 0.9, 0.3, 'brass', casino.D.small, 'y');
+
+  casino.cylinder(table, 'Pedestal column', 0, 6.8, 0, 3.3, 8.6, 'walnut_dark', casino.D.mid);
+  casino.cylinder(table, 'Pedestal lower collar', 0, 3.0, 0, 4.6, 0.9, 'brass', casino.D.mid);
+  casino.cylinder(table, 'Pedestal knop', 0, 6.8, 0, 4.4, 1.6, 'brass', casino.D.mid);
+  casino.cylinder(table, 'Pedestal upper collar', 0, 10.6, 0, 4.4, 0.9, 'brass', casino.D.mid);
+  for (let leg = 0; leg < 4; leg++) {
+    const a = (leg / 4) * Math.PI * 2 + Math.PI / 4;
+    const at = (r, y) => [Math.cos(a) * r, y, Math.sin(a) * r];
+    casino.tubeBetween(table, 'Claw foot', at(2.6, 4.2), at(6.6, 3.9), 1.35, 'brass', casino.D.tube);
+    casino.tubeBetween(table, 'Claw foot', at(6.6, 3.9), at(10.6, 2.2), 1.05, 'brass', casino.D.tube);
+    casino.tubeBetween(table, 'Claw foot', at(10.6, 2.2), at(13.0, 0.9), 0.8, 'brass', casino.D.tube);
+    casino.cylinder(table, 'Claw pad', Math.cos(a) * 13.9, 0.45, Math.sin(a) * 13.9, 0.95, 0.9, 'brass', casino.D.small, 'y');
+  }
 
   // Props are authored at their final size for the 3x table: 3x out from the centre,
   // 1.18x up (the table lift) and 1.6x across, so chips stay discs instead of plates.
@@ -1136,28 +1152,26 @@ async function buildModels(style, atlas) {
   const body = player.group('Body', [0, 7.4, 0]);
   const torso = player.group('Torso', [0, 7.4, 0], body);
   player.superLoft(torso, 'Trench coat', 0, 0.3, [
-    [7.1, 3.5, 2.5], [8.2, 3.9, 2.75], [10.4, 4.0, 2.8],
-    [12.4, 4.15, 2.9], [14.2, 4.5, 2.95], [15.4, 4.1, 2.6]
+    [7.0, 4.7, 3.3], [8.4, 4.2, 3.0], [10.4, 3.8, 2.7],
+    [12.4, 4.4, 2.9], [14.2, 5.3, 3.0], [15.4, 4.5, 2.4]
   ], 'fabric', player.D.mid, 3.0, 1, 1.2);
   player.superLoft(torso, 'Coat skirt', 0, 0.3, [
-    [5.0, 4.5, 3.2], [6.2, 4.2, 3.0], [7.3, 3.8, 2.7]
+    [5.0, 5.1, 3.7], [6.2, 4.8, 3.4], [7.3, 4.5, 3.1]
   ], 'fabric', player.D.mid, 3.0, 1, 1.2);
   player.cylinder(torso, 'Neck', 0, 15.9, 0.25, 0.95, 1.6, 'skin', player.D.small);
   player.box(torso, 'Shirt front', [-1.35, 12.3, 2.72], [1.35, 15.4, 2.98], 'bone', 0.15);
   player.box(torso, 'Oxblood tie', [-0.42, 12.1, 2.96], [0.42, 15.1, 3.12], 'blood', 0.1);
-  player.box(torso, 'Collar left', [-2.7, 15.1, 2.1], [-0.35, 16.2, 2.95], 'fabric', 0.18);
-  player.box(torso, 'Collar right', [0.35, 15.1, 2.1], [2.7, 16.2, 2.95], 'fabric', 0.18);
-  player.box(torso, 'Lapel left', [-3.3, 12.6, 2.6], [-1.1, 15.6, 3.02], 'leather', 0.14);
-  player.box(torso, 'Lapel right', [1.1, 12.6, 2.6], [3.3, 15.6, 3.02], 'leather', 0.14);
-  player.box(torso, 'Trench belt', [-3.9, 10.0, 2.35], [3.9, 10.9, 3.0], 'leather', 0.15);
+  player.box(torso, 'Collar left', [-3.0, 15.0, 1.5], [-0.4, 17.3, 3.0], 'fabric', 0.18, [0, 0, 12]);
+  player.box(torso, 'Collar right', [0.4, 15.0, 1.5], [3.0, 17.3, 3.0], 'fabric', 0.18, [0, 0, -12]);
+  player.box(torso, 'Lapel left', [-4.0, 12.2, 2.6], [-1.1, 15.8, 3.04], 'leather', 0.14);
+  player.box(torso, 'Lapel right', [1.1, 12.2, 2.6], [4.0, 15.8, 3.04], 'leather', 0.14);
+  player.box(torso, 'Trench belt', [-4.0, 10.0, 2.35], [4.0, 10.9, 3.0], 'leather', 0.15);
   player.box(torso, 'Belt buckle', [-0.65, 9.9, 3.0], [0.65, 11.0, 3.2], 'brass', 0.12);
   for (const y of [12.0, 13.3, 14.6]) {
     player.cylinder(torso, 'Coat button', 0, y, 3.06, 0.3, 0.18, 'brass', player.D.tiny, 'z');
   }
-  if (player.D.extra) {
-    for (const sx of [-4.4, 4.4]) {
-      player.box(torso, 'Epaulette', [sx - 1.0, 14.9, -0.7], [sx + 0.6, 15.4, 1.1], 'fabric', 0.12);
-    }
+  for (const sx of [-5.0, 5.0]) {
+    player.box(torso, 'Epaulette', [sx - 1.1, 15.0, -0.9], [sx + 1.1, 15.55, 1.3], 'leather', 0.12);
   }
 
   const legs = player.group('Legs', [0, 7.4, 0], body);
@@ -1171,20 +1185,20 @@ async function buildModels(style, atlas) {
   player.superLoft(head, 'Head', 0, 0.25, [
     [15.7, 1.0, 1.1], [16.2, 1.5, 1.55], [17.4, 1.68, 1.72], [18.5, 1.5, 1.55], [19.2, 1.05, 1.15]
   ], 'skin', player.D.mid, 2.5);
-  player.box(head, 'Brow shadow', [-1.5, 17.5, 1.4], [1.5, 18.15, 1.78], 'shadow', 0.08);
-  player.box(head, 'Mouth shadow', [-0.9, 16.15, 1.35], [0.9, 16.6, 1.72], 'shadow', 0.08);
   player.cylinder(head, 'Ear left', -1.62, 17.5, 0.1, 0.34, 0.5, 'skin', player.D.small, 'x');
   player.cylinder(head, 'Ear right', 1.62, 17.5, 0.1, 0.34, 0.5, 'skin', player.D.small, 'x');
-  player.superLoft(head, 'Fedora brim', 0, 0.25, [[19.15, 3.05, 3.2], [19.45, 2.9, 3.05]], 'leather', player.D.mid, 2.6);
+  player.superLoft(head, 'Fedora brim', 0, 0.25, [[19.0, 4.0, 4.2], [19.45, 3.1, 3.3]], 'leather', player.D.mid, 2.6);
   player.superLoft(head, 'Fedora crown', 0, 0.25, [
-    [19.35, 1.95, 2.05], [20.1, 2.05, 2.15], [21.3, 1.85, 1.95], [21.6, 1.15, 1.25]
+    [19.35, 1.95, 2.05], [20.2, 2.05, 2.15], [21.8, 1.8, 1.9], [22.4, 1.2, 1.3]
   ], 'fabric', player.D.mid, 2.6);
   player.superLoft(head, 'Oxblood fedora band', 0, 0.25, [[19.85, 2.12, 2.22], [20.45, 2.12, 2.22]], 'blood', player.D.mid, 2.6);
 
-  const gunArm = player.group('GunArm', [-4.4, 14.9, 0], body);
-  player.tubeBetween(gunArm, 'Coat upper arm', [-4.4, 14.9, 0], [-4.7, 12.1, 2.3], 1.0, 'fabric', player.D.tube);
-  player.tubeBetween(gunArm, 'Coat forearm', [-4.7, 12.1, 2.3], [-3.5, 15.8, 7.7], 0.85, 'fabric', player.D.tube);
+  const gunArm = player.group('GunArm', [-5.1, 14.9, 0], body);
+  player.tubeBetween(gunArm, 'Coat upper arm', [-5.1, 14.9, 0], [-5.4, 12.1, 2.3], 1.0, 'fabric', player.D.tube);
+  player.tubeBetween(gunArm, 'Coat forearm', [-5.4, 12.1, 2.3], [-3.5, 15.8, 7.7], 0.85, 'fabric', player.D.tube);
   player.cylinder(gunArm, 'Coat cuff', -3.5, 15.8, 7.5, 0.95, 0.9, 'leather', player.D.small, 'z');
+  player.cylinder(gunArm, 'Cuff strap', -3.55, 15.75, 6.6, 1.0, 0.4, 'leather', player.D.small, 'z');
+  player.box(gunArm, 'Cuff buckle', [-3.9, 16.6, 6.45], [-3.2, 17.0, 6.8], 'brass', 0.06);
   const hand = player.group('Hand', [-3.5, 16.0, 7.9], gunArm);
   player.box(hand, 'Gloved palm', [-4.55, 15.4, 7.5], [-2.35, 16.6, 9.3], 'leather', 0.28);
   for (let finger = 0; finger < 4; finger++) {
@@ -1193,59 +1207,77 @@ async function buildModels(style, atlas) {
   }
   player.box(hand, 'Gloved thumb', [-2.5, 15.5, 7.9], [-1.9, 16.4, 9.1], 'leather', 0.14);
 
-  const otherArm = player.group('OtherArm', [4.4, 14.9, 0], body);
-  player.tubeBetween(otherArm, 'Coat upper arm right', [4.4, 14.9, 0], [4.7, 12.3, 1.7], 1.0, 'fabric', player.D.tube);
-  player.tubeBetween(otherArm, 'Coat forearm right', [4.7, 12.3, 1.7], [4.5, 12.9, 3.3], 0.85, 'fabric', player.D.tube);
+  const otherArm = player.group('OtherArm', [5.1, 14.9, 0], body);
+  player.tubeBetween(otherArm, 'Coat upper arm right', [5.1, 14.9, 0], [5.4, 12.3, 1.7], 1.0, 'fabric', player.D.tube);
+  player.tubeBetween(otherArm, 'Coat forearm right', [5.4, 12.3, 1.7], [4.5, 12.9, 3.3], 0.85, 'fabric', player.D.tube);
   player.box(otherArm, 'Resting glove', [3.5, 12.2, 3.0], [5.5, 13.2, 4.8], 'leather', 0.28);
 
   await player.save(`seated_mafioso_${style}.bbmodel`);
 
   /* -------------------------------------------------------------- revolver */
   const gun = createProject(
-    'Fortuna Twin-chamber Revolver',
+    'Silvershot Twin-chamber Revolver',
     'Dark-oxide twin-chamber revolver: hexagonal barrel, fluted drum, trigger guard, spur hammer and checkered oxblood grips. Units are 1/16 m, muzzle toward +Z.',
     style, atlas
   );
   const gunBody = gun.group('Body');
-  gun.box(gunBody, 'Revolver frame', [-0.55, -0.4, -1.5], [0.55, 0.85, 1.2], 'oxide', 0.16);
-  gun.box(gunBody, 'Top strap', [-0.4, 0.85, -1.3], [0.4, 1.12, 1.5], 'steel', 0.1);
-  gun.box(gunBody, 'Rear sight', [-0.3, 1.12, -1.45], [0.3, 1.32, -1.15], 'enamel', 0.05);
-  gun.cylinder(gunBody, 'Barrel', 0, 0.72, 2.7, 0.4, 3.4, 'steel_worn', gun.D.mid, 'z');
-  gun.box(gunBody, 'Vent rib', [-0.15, 1.1, 1.0], [0.15, 1.28, 4.0], 'steel', 0.05);
-  gun.box(gunBody, 'Front sight', [-0.11, 1.28, 3.6], [0.11, 1.66, 3.9], 'steel_worn', 0.04);
-  gun.cylinder(gunBody, 'Muzzle crown', 0, 0.72, 4.4, 0.32, 0.24, 'enamel', gun.D.mid, 'z');
-  gun.cylinder(gunBody, 'Ejector rod', 0, -0.08, 2.2, 0.15, 2.8, 'steel', gun.D.small, 'z');
-  gun.cylinder(gunBody, 'Ejector head', 0, -0.08, 3.55, 0.28, 0.35, 'steel_worn', gun.D.small, 'z');
-
-  const drum = gun.group('Cylinder', [0, 0.1, 0.2]);
-  gun.cylinder(drum, 'Revolver drum', 0, 0.1, 0.2, 0.95, 1.5, 'steel_worn', gun.D.segments, 'z');
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2;
-    gun.addCube(drum, 'Drum flute', [0.72, -0.12, -0.5], [0.98, 0.12, 0.9], 'enamel',
-      [0, 0, (angle * 180) / Math.PI], [0, 0.1, 0.2]);
-  }
-  for (const chamberY of [0.55, -0.35]) {
-    for (const chamberZ of [-0.55, 0.95]) {
-      gun.cylinder(drum, 'Chamber mouth', 0, chamberY, chamberZ, 0.26, 0.18, 'shadow', gun.D.small, 'z');
+  // Chunky rear frame with a tall top block that flows down into the trigger guard and grip.
+  gun.box(gunBody, 'Revolver frame', [-0.5, -0.8, -2.7], [0.5, 1.7, -1.15], 'oxide', 0.16);
+  gun.box(gunBody, 'Frame web', [-0.42, -1.15, -1.15], [0.42, -0.6, 0.35], 'oxide', 0.12);
+  gun.box(gunBody, 'Frame shroud', [-0.45, 0.95, -1.2], [0.45, 1.6, 0.7], 'oxide', 0.12);
+  // Long round top bar, clamped at both ends, with a hexagonal barrel and muzzle block under it.
+  gun.tubeBetween(gunBody, 'Top bar', [0, 1.35, -1.4], [0, 1.35, 2.45], 0.2, 'steel', gun.D.small);
+  gun.box(gunBody, 'Bar clamp rear', [-0.34, 1.0, -1.45], [0.34, 1.65, -1.05], 'steel_worn', 0.06);
+  gun.box(gunBody, 'Bar clamp front', [-0.4, 0.95, 1.95], [0.4, 1.7, 2.55], 'steel_worn', 0.06);
+  gun.cylinder(gunBody, 'Barrel', 0, 0.62, 2.45, 0.42, 2.2, 'steel_worn', 6, 'z');
+  gun.cylinder(gunBody, 'Muzzle housing', 0, 0.62, 3.25, 0.52, 0.7, 'steel', 6, 'z');
+  gun.cylinder(gunBody, 'Muzzle bore', 0, 0.62, 3.62, 0.26, 0.08, 'shadow', gun.D.small, 'z');
+  for (const sx of [-0.52, 0.52]) {
+    for (const [sy, sz] of [[1.25, -2.15], [0.35, -2.15], [0.35, -1.6]]) {
+      gun.cylinder(gunBody, 'Frame screw', sx, sy, sz, 0.13, 0.08, 'brass', gun.D.small, 'x');
     }
   }
 
-  gun.torus(gunBody, 'Trigger guard', 0, -0.62, 0.45, 0.62, 0.12, 'steel', gun.D.mid, 5, 'z');
-  gun.tubeBetween(gunBody, 'Trigger', [0, -0.5, 0.5], [0, -1.05, 0.18], 0.1, 'steel', gun.D.tiny);
-  gun.tubeBetween(gunBody, 'Hammer spur', [0, 0.8, -1.4], [0, 1.75, -2.1], 0.15, 'steel_worn', gun.D.small);
-  gun.box(gunBody, 'Hammer cap', [-0.22, 1.68, -2.35], [0.22, 1.98, -1.95], 'brass', 0.06);
+  const drum = gun.group('Cylinder', [0, -0.1, 0.1]);
+  gun.cylinder(drum, 'Revolver drum', 0, -0.1, 0.1, 0.9, 2.7, 'steel_worn', gun.D.segments, 'z');
+  gun.cylinder(drum, 'Drum collar front', 0, -0.1, 1.38, 0.96, 0.3, 'steel', gun.D.mid, 'z');
+  gun.cylinder(drum, 'Drum collar rear', 0, -0.1, -1.18, 0.96, 0.3, 'steel', gun.D.mid, 'z');
+  for (let i = 0; i < 6; i++) {
+    gun.addCube(drum, 'Drum flute', [0.74, -0.23, -0.95], [0.98, 0.03, 1.15], 'enamel',
+      [0, 0, i * 60], [0, -0.1, 0.1]);
+  }
+  for (const chamberY of [0.62, -0.82]) {
+    gun.cylinder(drum, 'Chamber mouth', 0, chamberY, 1.5, 0.26, 0.12, 'shadow', gun.D.small, 'z');
+    gun.cylinder(drum, 'Chamber mouth', 0, chamberY, -1.3, 0.26, 0.12, 'shadow', gun.D.small, 'z');
+  }
 
-  const grip = gun.group('Grip', [0, -0.2, -1.2]);
-  gun.box(grip, 'Grip frame', [-0.5, -0.3, -1.65], [0.5, -2.5, -0.85], 'oxide', 0.16, [16, 0, 0]);
-  gun.box(grip, 'Grip panel left', [-0.56, -0.55, -1.55], [-0.44, -2.2, -0.95], 'blood', 0.08, [16, 0, 0]);
-  gun.box(grip, 'Grip panel right', [0.44, -0.55, -1.55], [0.56, -2.2, -0.95], 'blood', 0.08, [16, 0, 0]);
-  gun.cylinder(grip, 'Grip medallion', 0, -1.35, -1.22, 0.2, 0.1, 'brass', gun.D.small, 'z');
-  gun.torus(grip, 'Lanyard ring', 0, -2.5, -1.5, 0.22, 0.06, 'brass', gun.D.small, 4, 'x');
+  // Big curved thumb spur on the hammer.
+  const spur = [[0, 1.45, -2.55], [0, 2.0, -2.95], [0, 2.35, -3.5], [0, 2.3, -4.05]];
+  spur.slice(1).forEach((point, i) =>
+    gun.tubeBetween(gunBody, 'Hammer spur', spur[i], point, 0.22 - i * 0.02, 'steel_worn', gun.D.small));
+  gun.box(gunBody, 'Hammer pad', [-0.3, 2.15, -4.3], [0.3, 2.45, -3.8], 'steel', 0.05);
+
+  // Angular trigger guard sweeping back into the grip.
+  const guard = [[0, -1.0, 0.35], [0, -1.7, 0.1], [0, -1.95, -0.5], [0, -1.8, -1.0], [0, -1.3, -1.3]];
+  guard.slice(1).forEach((point, i) =>
+    gun.tubeBetween(gunBody, 'Trigger guard', guard[i], point, 0.12, 'steel', gun.D.tiny));
+  gun.tubeBetween(gunBody, 'Trigger', [0, -0.85, -0.45], [0, -1.35, -0.65], 0.1, 'steel_worn', gun.D.tiny);
+
+  // Thick raked grip with a textured panel and a brass medallion on each side.
+  const grip = gun.group('Grip', [0, -0.5, -2.0]);
+  gun.box(grip, 'Grip frame', [-0.58, -3.2, -2.6], [0.58, -0.5, -1.4], 'oxide', 0.18, [18, 0, 0]);
+  for (const side of [-1, 1]) {
+    gun.box(grip, 'Grip panel', [side > 0 ? 0.58 : -0.7, -2.9, -2.45], [side > 0 ? 0.7 : -0.58, -0.9, -1.55],
+      'leather', 0.06, [18, 0, 0]);
+    gun.cylinder(grip, 'Grip medallion', side * 0.74, -1.3, -1.81, 0.28, 0.1, 'brass', gun.D.small, 'x');
+  }
+  gun.box(grip, 'Butt cap', [-0.62, -3.45, -2.75], [0.62, -3.15, -1.45], 'steel_worn', 0.06, [18, 0, 0]);
+  gun.torus(grip, 'Lanyard ring', 0, -3.3, -2.65, 0.22, 0.06, 'brass', gun.D.small, 4);
   await gun.save(`twin_chamber_revolver_${style}.bbmodel`);
 
   /* -------------------------------------------------------------- monitor */
   const clock = createProject(
-    'Fortuna Chess-clock Life Monitor',
+    'Silvershot Chess-clock Life Monitor',
     'Industrial chess-clock life monitor. Three needles share one dial; the runtime duplicates the gauge for every seat. Units are 1/16 m; the dial faces -Z.',
     style, atlas
   );

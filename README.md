@@ -66,7 +66,7 @@ It writes both variants plus albedo atlases (`assets/blockbench/textures/realist
 - `models.js` parses the `.bbmodel` JSON, rebuilds indexed geometry (welding vertices for the realistic variant), builds PBR materials from the atlases, and places the revolver in the holder's hand.
 - `main.js` runs a first-person seat camera, gives every player a three-needle life clock, animates self-aiming, hit reactions and the body collapse, and projects the revolver's muzzle flash. The click-to-target path raycasts player bodies and falls back to nearby head/torso screen positions when a click misses a mesh.
 - The table is the 1.35 m round pedestal scaled 3x (8.1 m across) with the seats ringed just outside its edge, so the far side reads as a long stretch of felt instead of a dinner table. Drag anywhere to look around (yaw ~66 degrees each way, pitch down 29 / up 32), arrow keys nudge the head, double-click or `c` recentres. A drag longer than 8 px is a look, a shorter one is still a click on a target.
-- Two separate layers carry the look. The desaturated ULTRAKILL palette is baked into the albedo atlas at generation time (chroma reduced to 36%, contrast pushed, a little grain, plus a slow hue bleed and melt wave), so the materials read correctly on their own. The Buckshot Roulette lighting is staging, not the definition: a single warm practical sitting just under the pendant glass, a red rim light behind the table, near-black walls, film grain, a heavy vignette and a bloom pass. The grade tops up saturation (0.55) and contrast, then adds the hallucination layer: a slow liquid ripple over the frame, a breathing zoom, drifting channels and a pulsing exposure. `?post=0` drops the hallucination and the grade together, leaving the baked palette.
+- Two layers carry the look. The desaturated ULTRAKILL palette is baked into the albedo atlas at generation time (chroma reduced to 36%, contrast pushed, a little grain), and the low-poly textures are point-sampled so the texels stay hard-edged. The low-poly set also renders at a reduced internal resolution (60% by default, `?res=0.5` for chunkier, `?res=1` for sharp) and is upscaled with hard pixels. The Buckshot Roulette lighting is staging: one brutal warm key light under the pendant with a hard-edged beam and hard shadows, a red rim light behind the table, almost no fill so everything outside the beam falls to black, a strong bloom pass and a heavy vignette. The post grade then drains the colour further, pushes contrast, adds grain and posterises to 24 levels per channel with a 4x4 ordered dither. There is no screen warp, hue drift or breathing zoom. `?post=0` turns the grade and bloom off.
 - `index.html` is the entry point and shows a boot overlay with the full error if a module fails to load.
 - `server.js` blocks dotfiles (`.git`, `.devcontainer`) and exposes a `leaveTable` action so any player can return to the party list after a match.
 
@@ -88,3 +88,14 @@ Upload the repository files to the root of your GitHub repository. Do not upload
 ## Run on a Node.js host
 
 Use Node.js 18 or newer and run `npm start`. GitHub stores the source code; it does not run the multiplayer server by itself.
+
+
+## Model references (Silvershot)
+
+The three hero assets are built in `scripts/build_blockbench_assets.mjs` to match the reference images:
+
+- **Mafioso:** a broad-shouldered, belted trench coat with a flared hem, popped collar, epaulettes and cuff straps, and a wide-brimmed fedora with a tall crown. The face has no features; in the game the head gets one dark, slightly glossy material so only the room lights shape it.
+- **Table:** a dark worn plank top with seams and cracks, a thick rolled rim, a flat brass sunburst medallion in the centre, a carved pedestal and four clawed brass feet.
+- **Revolver:** a chunky angular frame with screws, a long clamped top bar, a hexagonal barrel and muzzle block, a fluted cylinder, a curved thumb spur, an angular trigger guard and a thick raked grip with a brass medallion.
+
+Run `node scripts/build_blockbench_assets.mjs` to regenerate every `.bbmodel` and texture. The low-poly set is derived from the realistic one; meshes under 40 triangles are left as they are so small parts such as the hexagonal barrel stay intact.

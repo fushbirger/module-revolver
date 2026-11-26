@@ -35,6 +35,13 @@ let stateAt = performance.now();
 let hoverLocal = null, hoverRemote = null;
 let parties = [], lobbyError = '';
 
+// Low-poly mode renders at a reduced internal resolution and is upscaled with hard pixels
+// (?res=0.5 for chunkier, ?res=1 for full sharpness). It is also much cheaper on phones.
+const RENDER_SCALE = Number(params.get('res')) || 0.6;
+const renderPixelRatio = () => MODEL_STYLE === 'lowpoly'
+  ? RENDER_SCALE
+  : Math.min(window.devicePixelRatio || 1, 1.5);
+
 const quick = Number(params.get('quick')) || 0;      // ?quick=3 -> create a test party, add bots, start
 let quickDone = false;
 
@@ -100,11 +107,12 @@ function nudgeView(yaw, pitch) {
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 1.15;
 document.body.appendChild(renderer.domElement);
+if (MODEL_STYLE === 'lowpoly') renderer.domElement.style.imageRendering = 'pixelated';
 
 let composer = null, bloom = null, gradePass = null;
 
@@ -139,7 +147,7 @@ function updateResponsiveCamera() {
   else camera.lookAt(look);
   baseQuat.copy(camera.quaternion);
   cameraRoll = 0;
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  const pixelRatio = renderPixelRatio();
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   if (typeof composer !== 'undefined' && composer) {
@@ -152,11 +160,12 @@ window.addEventListener('resize', updateResponsiveCamera);
 /* Buckshot Roulette lighting: one hard overhead practical, a red rim, almost no ambient. */
 // The pendant hangs at ~4.6 m, so the practical sits just under its glass; above it
 // the shade would shadow the middle of the table.
-const spot = new THREE.SpotLight(0xffe2b0, 195, 14, Math.PI / 4.4, 0.8, 1.35);
+const KEY_INTENSITY = 340;
+const spot = new THREE.SpotLight(0xfff0d0, KEY_INTENSITY, 14, Math.PI / 4.4, 0.25, 1.35);
 spot.position.set(0.0, 4.45, 0.0);
 spot.target.position.set(0, 0.82, 0);
 spot.castShadow = true;
-spot.shadow.mapSize.set(2048, 2048);
+spot.shadow.mapSize.set(1024, 1024);
 spot.shadow.camera.near = 0.5;
 spot.shadow.camera.far = 14;
 spot.shadow.bias = -0.0007;
@@ -173,7 +182,7 @@ spill.target.position.set(0, 1.0, 0);
 const ringLights = [];
 for (let i = 0; i < 6; i++) {
   const angle = (i / 6) * Math.PI * 2 + Math.PI / 6;
-  const light = new THREE.SpotLight(0xffb070, 210, 22, 0.42, 0.9, 1.3);
+  const light = new THREE.SpotLight(0xffb070, 150, 22, 0.42, 0.35, 1.3);
   light.position.set(Math.sin(angle) * 8.4, 2.5, Math.cos(angle) * 8.4);
   light.target.position.set(Math.sin(angle) * 5.34, 1.25, Math.cos(angle) * 5.34);
   scene.add(light, light.target);
@@ -184,9 +193,9 @@ const rim = new THREE.PointLight(0x9c1119, 150, 16, 2.0);
 rim.position.set(0, 2.3, -5.2);
 const coldFill = new THREE.PointLight(0x2f3d4d, 2.5, 8, 2.0);
 coldFill.position.set(4.6, 3.0, 3.4);
-const hemi = new THREE.HemisphereLight(0x5a4c3b, 0x0b0908, 0.48);
+const hemi = new THREE.HemisphereLight(0x5a4c3b, 0x0b0908, 0.12);
 // A soft frontal lift so faces are readable without a flat key; the practicals do the shaping.
-const houseFill = new THREE.DirectionalLight(0xffd9b4, 0.38);
+const houseFill = new THREE.DirectionalLight(0xffd9b4, 0.08);
 houseFill.position.set(0.6, 3.0, 5.0);
 houseFill.target.position.set(0, 0.9, 0);
 scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, rim, coldFill, ...ringLights);
@@ -229,12 +238,12 @@ const environment = createEnvironment(scene);
 const tableNode = environment.getObjectByName('Round Pedestal Table');
 if (!tableNode) throw new Error('Casino environment is missing the table');
 tableNode.scale.set(TABLE_SCALE, TABLE_LIFT, TABLE_SCALE);
-const sign = environment.getObjectByName('Fortuna Sign');
+const sign = environment.getObjectByName('Silvershot Sign');
 let lettering;
 sign?.traverse(object => {
-  if (!lettering && object.isMesh && object.name === 'FORTUNA lettering') lettering = object;
+  if (!lettering && object.isMesh && object.name === 'SILVERSHOT lettering') lettering = object;
 });
-if (!sign || !lettering) throw new Error('Casino environment is missing its Fortuna marquee');
+if (!sign || !lettering) throw new Error('Casino environment is missing its Silvershot marquee');
 const gun = createGun(scene);
 gun.model.rotation.set(0.05, 0.2, 0.12);
 
@@ -244,10 +253,11 @@ const GradeShader = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uSaturation: { value: 0.55 },
-    uContrast: { value: 1.2 },
-    uVignette: { value: 0.92 },
-    uGrain: { value: 0.055 }
+    uSaturation: { value: 0.3 },
+    uContrast: { value: 1.4 },
+    uVignette: { value: 0.9 },
+    uGrain: { value: 0.035 },
+    uLevels: { value: 24.0 }
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -264,49 +274,41 @@ const GradeShader = {
     uniform float uContrast;
     uniform float uVignette;
     uniform float uGrain;
+    uniform float uLevels;
     varying vec2 vUv;
 
     float hash(vec2 p) {
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
     }
+    // 4x4 ordered (Bayer) dither: the crunchy retro stipple on every gradient
+    float bayer2(vec2 a) { a = floor(a); return fract(a.x * 0.5 + a.y * a.y * 0.75); }
+    float bayer4(vec2 a) { return bayer2(0.5 * a) * 0.25 + bayer2(a); }
 
     void main() {
       vec2 uv = vUv;
-      // hallucination: the whole frame breathes and drifts like it is under water
-      uv += vec2(
-        sin(uv.y * 13.0 + uTime * 0.7) + sin(uv.y * 31.0 - uTime * 0.31),
-        cos(uv.x * 11.0 + uTime * 0.55) + cos(uv.x * 27.0 + uTime * 0.23)
-      ) * 0.004;
-      uv = (uv - 0.5) * (1.0 + sin(uTime * 0.5) * 0.012) + 0.5;
       vec2 dir = uv - 0.5;
-      float radius = dot(dir, dir);
-      float aberration = (0.0010 + radius * 0.0042) * (1.0 + sin(uTime * 0.9) * 0.3);
-      vec3 color;
-      color.r = texture2D(tDiffuse, uv + dir * aberration).r;
-      color.g = texture2D(tDiffuse, uv).g;
-      color.b = texture2D(tDiffuse, uv - dir * aberration).b;
+      vec3 color = texture2D(tDiffuse, uv).rgb;
 
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
       vec3 graded = mix(vec3(luma), color, uSaturation);
 
-      // cold shadows, bone highlights, a whisper of blood in the midtones
-      graded = mix(graded, graded * vec3(0.86, 0.93, 1.08), (1.0 - smoothstep(0.0, 0.42, luma)) * 0.6);
-      graded = mix(graded, graded * vec3(1.07, 1.0, 0.9), smoothstep(0.5, 1.0, luma) * 0.55);
-      graded.r += smoothstep(0.25, 0.8, luma) * (1.0 - smoothstep(0.8, 1.0, luma)) * 0.012;
+      // cold, drained shadows and bone-white highlights
+      graded = mix(graded, graded * vec3(0.9, 0.95, 1.06), (1.0 - smoothstep(0.0, 0.4, luma)) * 0.5);
+      graded = mix(graded, graded * vec3(1.05, 1.0, 0.93), smoothstep(0.55, 1.0, luma) * 0.5);
 
-      graded = max(graded - 0.014, 0.0);
+      graded = max(graded - 0.02, 0.0);
       graded = (graded - 0.5) * uContrast + 0.5;
-      graded = pow(max(graded, 0.0), vec3(1.05));
-
-      // slow channel drift and a breathing exposure: colours crawl, the room inhales
-      graded = mix(graded, graded.gbr, 0.09 + 0.06 * sin(uTime * 0.6));
-      graded *= 1.0 + sin(uTime * 0.8 + uv.y * 2.0) * 0.03;
+      graded = max(graded, 0.0);
 
       float vignette = 1.0 - smoothstep(0.3, 0.95, length(dir * vec2(1.0, 1.12)));
       graded *= mix(1.0, vignette, uVignette);
 
-      float grain = hash(uv * uResolution + fract(uTime) * 91.7) - 0.5;
+      float grain = hash(floor(uv * uResolution) + fract(uTime) * 91.7) - 0.5;
       graded += grain * uGrain * (1.0 - luma * 0.55);
+
+      // posterise to a limited palette with ordered dithering
+      graded += (bayer4(gl_FragCoord.xy) - 0.5) / uLevels;
+      graded = floor(graded * uLevels + 0.5) / uLevels;
 
       gl_FragColor = vec4(max(graded, 0.0), 1.0);
     }
@@ -318,7 +320,7 @@ composer = postEnabled ? new EffectComposer(renderer) : null;
 if (composer) {
   composer.addPass(new RenderPass(scene, camera));
   bloom = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.3, 0.68, 0.9
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.6, 0.78
   );
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
@@ -445,7 +447,7 @@ const BTN = `${CUT};padding:11px 22px;background:rgba(8,8,9,.86);border:1px soli
 document.
   body.insertAdjacentHTML('beforeend', `
   <div id="scanlines"></div>
-  <div id="hudTag">FORTUNA&nbsp;&nbsp;//&nbsp;&nbsp;TABLE</div>
+  <div id="hudTag">SILVERSHOT&nbsp;&nbsp;//&nbsp;&nbsp;TABLE</div>
   <div id="msg"></div>
   <div id="hint" style="position:fixed;top:78px;left:0;right:0;z-index:6;text-align:center;pointer-events:none;font-family:${HUD_FONT};font-size:10px;font-weight:600;letter-spacing:.28em;color:#8d887c;text-transform:uppercase"></div>
   <div id="ui">
@@ -1010,14 +1012,6 @@ function animate() {
       p.body.rotation.x += (-0.24 * hitFlinch - p.body.rotation.x) * Math.min(1, 18 * dt);
       p.body.position.z += (-0.1 * hitFlinch - p.body.position.z) * Math.min(1, 18 * dt);
     }
-    if (now >= p.nextBlinkAt) {
-      p.blinkUntil = now + 120;
-      p.nextBlinkAt = now + 2600 + Math.random() * 3200;
-    }
-    p.eyes.forEach(eye => {
-      const blinkScale = now < p.blinkUntil ? 0.08 : eye.userData.openScaleY;
-      eye.scale.y += (blinkScale - eye.scale.y) * Math.min(1, 36 * dt);
-    });
 
     if (!p.isDead) {
       const pulling = spinning && i === S.active;
@@ -1079,7 +1073,7 @@ function animate() {
   casinoSurge *= Math.pow(0.08, dt);
   const spinBeat = spinning ? (Math.sin(t * 4.6) + 1) * 0.5 : 0;
   const flicker = 0.95 + Math.sin(t * 7.3) * 0.012 + Math.sin(t * 13.7) * 0.008;
-  spot.intensity = 195 * flicker + casinoSurge * 70;
+  spot.intensity = KEY_INTENSITY * flicker + casinoSurge * 90;
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0xb8ad91 : 0x4a4a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {
@@ -1087,7 +1081,7 @@ function animate() {
     rim.intensity = 34 + finalFlash * 90 + spinBeat * 40 + casinoSurge * 40;
     finalFlash *= Math.pow(0.08, dt);
   } else rim.intensity = 100 + Math.sin(t * 0.32) * 8 + spinBeat * 40 + casinoSurge * 40;
-  lightCone.material.opacity = 0.022 + spinBeat * 0.018 + casinoSurge * 0.02;
+  lightCone.material.opacity = 0.05 + spinBeat * 0.02 + casinoSurge * 0.03;
   machines.forEach((machine, index) => {
     const lit = index === S.active;
     machine.screenMat.color.setHex(lit ? lampHex : 0x2b2c2e);
@@ -1143,7 +1137,7 @@ function animate() {
   if (hintEl.textContent !== hint) hintEl.textContent = hint;
   if (gradePass) {
     gradePass.uniforms.uTime.value = t;
-    gradePass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+    gradePass.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight).multiplyScalar(renderPixelRatio());
   }
   if (composer) composer.render();
   else renderer.render(scene, camera);
