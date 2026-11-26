@@ -442,7 +442,8 @@ function buildSeats(n) {
 const HUD_FONT = `ui-monospace,"SFMono-Regular",Menlo,Consolas,"Courier New",monospace`;
 const CUT = 'clip-path:polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,9px 100%,0 calc(100% - 9px))';
 const BTN = `${CUT};padding:11px 22px;background:rgba(8,8,9,.86);border:1px solid #6d685d;color:#ded8c8;font-family:${HUD_FONT};font-size:12px;font-weight:600;letter-spacing:.22em;text-transform:uppercase`;
-document.body.insertAdjacentHTML('beforeend', `
+document.
+  body.insertAdjacentHTML('beforeend', `
   <div id="scanlines"></div>
   <div id="hudTag">FORTUNA&nbsp;&nbsp;//&nbsp;&nbsp;TABLE</div>
   <div id="msg"></div>
