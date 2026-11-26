@@ -152,7 +152,7 @@ window.addEventListener('resize', updateResponsiveCamera);
 /* Buckshot Roulette lighting: one hard overhead practical, a red rim, almost no ambient. */
 // The pendant hangs at ~4.6 m, so the practical sits just under its glass; above it
 // the shade would shadow the middle of the table.
-const spot = new THREE.SpotLight(0xffe2b0, 210, 14, Math.PI / 3.8, 0.75, 1.35);
+const spot = new THREE.SpotLight(0xffe2b0, 195, 14, Math.PI / 4.4, 0.8, 1.35);
 spot.position.set(0.0, 4.45, 0.0);
 spot.target.position.set(0, 0.82, 0);
 spot.castShadow = true;
@@ -163,26 +163,33 @@ spot.shadow.bias = -0.0007;
 spot.shadow.normalBias = 0.022;
 // A wide, weak spill from the same bulb so the players' faces read at the table edge
 // without flattening the pool the key light throws on the felt.
-const spill = new THREE.SpotLight(0xffd7a6, 46, 11, Math.PI / 2.2, 0.9, 1.6);
+const spill = new THREE.SpotLight(0xffd7a6, 16, 11, Math.PI / 2.8, 0.9, 1.6);
 spill.position.copy(spot.position);
 spill.target.position.set(0, 1.0, 0);
-// The felt throws the lamp back up at the faces of everyone seated round it. Without
-// this the players are holes in the frame at 8 m; with it they read like the reference.
-const bounce = new THREE.PointLight(0xff9c62, 58, 13, 1.6);
-bounce.position.set(0, 0.62, 0);
+// The room lights the players, not a lamp over the table. Six practicals stand out in
+// the casino behind the ring and throw across the seats, so each figure gets a rim from
+// behind while the felt keeps only the pendant's pool. Aiming them at shoulder height on
+// the ring is what stops the cones painting the tabletop beige.
+const ringLights = [];
+for (let i = 0; i < 6; i++) {
+  const angle = (i / 6) * Math.PI * 2 + Math.PI / 6;
+  const light = new THREE.SpotLight(0xffb070, 210, 22, 0.42, 0.9, 1.3);
+  light.position.set(Math.sin(angle) * 8.4, 2.5, Math.cos(angle) * 8.4);
+  light.target.position.set(Math.sin(angle) * 5.34, 1.25, Math.cos(angle) * 5.34);
+  scene.add(light, light.target);
+  ringLights.push(light);
+}
+// Deep red bounce off the far wall, still the thing that pulses with the wheel.
 const rim = new THREE.PointLight(0x9c1119, 150, 16, 2.0);
 rim.position.set(0, 2.3, -5.2);
 const coldFill = new THREE.PointLight(0x2f3d4d, 2.5, 8, 2.0);
 coldFill.position.set(4.6, 3.0, 3.4);
-const hemi = new THREE.HemisphereLight(0x2c3138, 0x050506, 0.32);
-const houseFill = new THREE.DirectionalLight(0xcfd3d8, 0.45);
+const hemi = new THREE.HemisphereLight(0x5a4c3b, 0x0b0908, 0.48);
+// A soft frontal lift so faces are readable without a flat key; the practicals do the shaping.
+const houseFill = new THREE.DirectionalLight(0xffd9b4, 0.38);
 houseFill.position.set(0.6, 3.0, 5.0);
 houseFill.target.position.set(0, 0.9, 0);
-const sconceL = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
-sconceL.position.set(-6.5, 2.7, -9.2);
-const sconceR = new THREE.PointLight(0xe6dcc2, 34, 10, 1.8);
-sconceR.position.set(6.5, 2.7, -9.2);
-scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, bounce, rim, coldFill, sconceL, sconceR);
+scene.add(hemi, houseFill, houseFill.target, spot, spot.target, spill, spill.target, rim, coldFill, ...ringLights);
 
 // Faint volumetric cone under the pendant so the key light reads as a real fixture.
 const muzzleLight = new THREE.PointLight(0xffdfae, 0, 5, 2);
@@ -311,7 +318,7 @@ composer = postEnabled ? new EffectComposer(renderer) : null;
 if (composer) {
   composer.addPass(new RenderPass(scene, camera));
   bloom = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.72, 0.8
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.3, 0.68, 0.9
   );
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
@@ -779,6 +786,13 @@ let shake = 0, finalFlash = 0, casinoSurge = 0, muzzleFlash = 0;
 function burst(i) {
   const p = players[i]; if (!p) return;
   const pos = p.head.getWorldPosition(new THREE.Vector3());
+  // Your own head is inside the camera: spawning there throws 9 cm planes across the
+  // near plane, so your burst is thrown out in front of the lens instead.
+  if (i === S.you) {
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    pos.copy(camera.position).addScaledVector(forward, 1.6);
+    pos.y -= 0.3;
+  }
   for (let k = 0; k < 40; k++) {
     const m = mk(confettiGeo, confettiMats[k % 5], pos.x, pos.y, pos.z, 0, 0, 0, false);
     scene.add(m);
@@ -1064,7 +1078,7 @@ function animate() {
   casinoSurge *= Math.pow(0.08, dt);
   const spinBeat = spinning ? (Math.sin(t * 4.6) + 1) * 0.5 : 0;
   const flicker = 0.95 + Math.sin(t * 7.3) * 0.012 + Math.sin(t * 13.7) * 0.008;
-  spot.intensity = 210 * flicker + casinoSurge * 70;
+  spot.intensity = 195 * flicker + casinoSurge * 70;
   let lampHex = (ph === 'IDLE' || ph === 'SPINNING') ? 0xb8ad91 : 0x4a4a45;
   if (now < lampUntil) lampHex = lampOverride;
   if (finalFlash > 0.01) {

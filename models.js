@@ -229,7 +229,7 @@ function cloneModel(key) {
 
 // A whisper of self-illumination from the albedo so a figure sitting 8 m from the
 // pendant still reads as a silhouette instead of a hole in the frame.
-function liftFromBlack(root, color = 0x4a423a, intensity = 0.9) {
+function liftFromBlack(root, color = 0x6a5f52, intensity = 1.8) {
   root.traverse(object => {
     if (!object.isMesh || !object.material || !object.material.map) return;
     object.material.emissiveMap = object.material.map;
@@ -261,8 +261,27 @@ function findMesh(root, name) {
   return mesh;
 }
 
+// The room's practicals have to look like the source of the light they cast, so the
+// sconce glass, the pendant glass and the marquee lettering are made emissive here.
+const GLOWING = [
+  [/^sconce glass/i, 0xffb367, 2.4],
+  [/^pendant glass/i, 0xffd9a0, 1.5],
+  [/^FORTUNA lettering$/i, 0xd2242c, 1.6],
+  [/^marquee inset$/i, 0x7c1016, 0.9],
+  [/^roulette velvet field$/i, 0x5c0b10, 0.8]
+];
+
 export function createEnvironment(scene) {
   const environment = cloneModel('casino_environment');
+  environment.traverse(object => {
+    if (!object.isMesh) return;
+    const rule = GLOWING.find(([pattern]) => pattern.test(object.name));
+    if (!rule) return;
+    const [, hex, intensity] = rule;
+    object.material = object.material.clone();
+    object.material.emissive = new THREE.Color(hex);
+    object.material.emissiveIntensity = intensity;
+  });
   scene.add(environment);
   return environment;
 }
@@ -314,7 +333,10 @@ export function createMachine(scene) {
 export function createMafiaPlayer(scene, x, y, z, rotY, variant = 0) {
   const root = cloneModel('seated_mafioso');
   cloneMaterials(root);
-  liftFromBlack(root);
+  liftFromBlack(root, 0x7d7466, 1.15);
+  // The atlas is a near-black suit. Under a room this dark that reads as a hole, so the
+  // albedo itself is lifted: the figures stay pale grey and the practicals still shape them.
+  root.traverse(object => { if (object.isMesh) object.material.color.setScalar(1.5); });
   root.position.set(x, y, z);
   root.rotation.y = rotY;
   root.scale.setScalar(BLOCKBENCH_SCALE);
